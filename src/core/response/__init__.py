@@ -1,0 +1,1 @@
+"""Response and citation assembly."""

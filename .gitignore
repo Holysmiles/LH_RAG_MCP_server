@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# Local environments and secrets
+.conda/
+.env
+.env.*
+!.env.example
+
+# Build artifacts
+build/
+dist/
+
+# Generated runtime data
+data/documents/*
+data/images/*
+data/db/chroma/*
+data/db/bm25/*
+cache/embeddings/*
+cache/captions/*
+cache/processing/*
+logs/*
+!data/documents/.gitkeep
+!data/images/.gitkeep
+!data/db/chroma/.gitkeep
+!data/db/bm25/.gitkeep
+!cache/embeddings/.gitkeep
+!cache/captions/.gitkeep
+!cache/processing/.gitkeep
+!logs/.gitkeep
+
+# Editor and OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Auto Coder sync cache
+.agents/skills/auto-coder/.spec_hash
+.claude/skills/auto-coder/.spec_hash
+.github/skills/auto-coder/.spec_hash

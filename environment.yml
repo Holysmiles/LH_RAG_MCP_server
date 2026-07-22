@@ -1,0 +1,6 @@
+name: rag
+channels:
+  - https://repo.anaconda.com/pkgs/main
+dependencies:
+  - python=3.11
+  - pip

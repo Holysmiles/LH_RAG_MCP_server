@@ -1,0 +1,46 @@
+project:
+  name: modular-rag-mcp-server
+  environment: development
+
+llm:
+  provider: openai
+  model: gpt-4o-mini
+  api_key: ${OPENAI_API_KEY}
+
+embedding:
+  provider: openai
+  model: text-embedding-3-small
+  api_key: ${OPENAI_API_KEY}
+
+vector_store:
+  provider: chroma
+  persist_directory: ./data/db/chroma
+  collection_name: knowledge_hub
+
+retrieval:
+  dense_top_k: 20
+  sparse_top_k: 20
+  fusion_top_k: 10
+  rrf_k: 60
+
+rerank:
+  enabled: false
+  provider: none
+
+evaluation:
+  enabled: false
+  provider: custom
+
+observability:
+  log_level: INFO
+  trace_enabled: true
+  trace_file: ./logs/traces.jsonl
+
+dashboard:
+  enabled: true
+  port: 8501
+
+ingestion:
+  chunk_size: 1000
+  chunk_overlap: 200
+  batch_size: 100

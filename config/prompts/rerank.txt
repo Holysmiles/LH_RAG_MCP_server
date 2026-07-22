@@ -1,0 +1,1 @@
+Rank the candidate passages by relevance to the query. Return the most relevant candidates first.
