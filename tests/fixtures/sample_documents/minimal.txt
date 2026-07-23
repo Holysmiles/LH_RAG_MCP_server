@@ -1,0 +1,3 @@
+Modular RAG MCP Server sample document.
+
+This fixture provides deterministic local content for tests without external dependencies.

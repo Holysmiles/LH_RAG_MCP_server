@@ -10,8 +10,22 @@ readme = "README.md"
 requires-python = ">=3.11,<3.12"
 dependencies = []
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0,<9.0",
+]
+
 [tool.setuptools]
 package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+markers = [
+    "unit: fast tests for isolated modules",
+    "integration: tests covering collaboration between modules",
+    "e2e: end-to-end workflow tests",
+]
