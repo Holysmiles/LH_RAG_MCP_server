@@ -23,6 +23,7 @@ class Settings:
     project: dict[str, Any] = field(default_factory=dict)
     llm: dict[str, Any] = field(default_factory=dict)
     embedding: dict[str, Any] = field(default_factory=dict)
+    splitter: dict[str, Any] = field(default_factory=dict)
     vector_store: dict[str, Any] = field(default_factory=dict)
     retrieval: dict[str, Any] = field(default_factory=dict)
     rerank: dict[str, Any] = field(default_factory=dict)
@@ -37,6 +38,7 @@ REQUIRED_FIELDS = (
     "llm.model",
     "embedding.provider",
     "embedding.model",
+    "splitter.provider",
     "vector_store.provider",
     "retrieval.dense_top_k",
     "retrieval.sparse_top_k",

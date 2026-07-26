@@ -12,6 +12,11 @@ embedding:
   model: text-embedding-3-small
   api_key: ${OPENAI_API_KEY}
 
+splitter:
+  provider: recursive
+  chunk_size: 1000
+  chunk_overlap: 200
+
 vector_store:
   provider: chroma
   persist_directory: ./data/db/chroma
@@ -41,6 +46,4 @@ dashboard:
   port: 8501
 
 ingestion:
-  chunk_size: 1000
-  chunk_overlap: 200
   batch_size: 100

@@ -17,6 +17,11 @@ VALID_CONFIG = {
         "model": "text-embedding-3-small",
         "api_key": "${TEST_OPENAI_API_KEY}",
     },
+    "splitter": {
+        "provider": "recursive",
+        "chunk_size": 1000,
+        "chunk_overlap": 200,
+    },
     "vector_store": {"provider": "chroma"},
     "retrieval": {
         "dense_top_k": 20,
@@ -41,6 +46,7 @@ def test_load_settings_returns_structured_settings(tmp_path: Path) -> None:
 
     assert isinstance(settings, Settings)
     assert settings.llm["provider"] == "openai"
+    assert settings.splitter["chunk_size"] == 1000
     assert settings.retrieval["fusion_top_k"] == 10
 
 
