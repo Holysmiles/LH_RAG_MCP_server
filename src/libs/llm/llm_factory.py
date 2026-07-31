@@ -11,7 +11,10 @@ from collections.abc import Callable, Mapping
 from typing import Any, ClassVar
 
 from core.settings import Settings
+from libs.llm.azure_llm import AzureLLM
 from libs.llm.base_llm import BaseLLM
+from libs.llm.deepseek_llm import DeepSeekLLM
+from libs.llm.openai_llm import OpenAILLM
 
 
 LLMBuilder = Callable[[Mapping[str, Any]], BaseLLM]
@@ -24,7 +27,11 @@ class LLMFactory:
     use either a class constructor or a dedicated construction function.
     """
 
-    _providers: ClassVar[dict[str, LLMBuilder]] = {}
+    _providers: ClassVar[dict[str, LLMBuilder]] = {
+        "azure": AzureLLM,
+        "deepseek": DeepSeekLLM,
+        "openai": OpenAILLM,
+    }
 
     @classmethod
     def register(
