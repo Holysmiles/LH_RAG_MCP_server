@@ -23,7 +23,7 @@ class AzureLLM(OpenAILLM):
         endpoint = config.get("azure_endpoint")
         if not isinstance(endpoint, str) or not endpoint.strip():
             self._raise_configuration("missing required field 'llm.azure_endpoint'")
-        return endpoint.rstrip("/")
+        return self._normalize_base_url(endpoint)
 
     def _build_url(self) -> str:
         deployment = quote(self.deployment_name, safe="")

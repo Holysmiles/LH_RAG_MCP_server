@@ -81,7 +81,7 @@ def test_openai_chat_sends_expected_request(monkeypatch: pytest.MonkeyPatch) -> 
         captured.update(request=request, timeout=timeout)
         return successful_response("hello")
 
-    monkeypatch.setattr("libs.llm.openai_llm.urlopen", fake_urlopen)
+    monkeypatch.setattr("libs.llm.base_http_llm.urlopen", fake_urlopen)
     llm = OpenAILLM(
         {
             "model": "gpt-test",
@@ -112,7 +112,7 @@ def test_deepseek_uses_its_default_endpoint(monkeypatch: pytest.MonkeyPatch) -> 
         captured["request"] = request
         return successful_response()
 
-    monkeypatch.setattr("libs.llm.openai_llm.urlopen", fake_urlopen)
+    monkeypatch.setattr("libs.llm.base_http_llm.urlopen", fake_urlopen)
     llm = DeepSeekLLM({"model": "deepseek-chat", "api_key": "secret"})
 
     llm.chat([{"role": "user", "content": "Hi"}])
@@ -132,7 +132,7 @@ def test_azure_chat_uses_deployment_url_and_api_key_header(
         captured["request"] = request
         return successful_response()
 
-    monkeypatch.setattr("libs.llm.openai_llm.urlopen", fake_urlopen)
+    monkeypatch.setattr("libs.llm.base_http_llm.urlopen", fake_urlopen)
     llm = AzureLLM(
         {
             "model": "gpt-test",
@@ -180,7 +180,7 @@ def test_request_failure_identifies_provider_without_leaking_api_key(
     def failing_urlopen(request: Request, timeout: float) -> FakeHTTPResponse:
         raise URLError("connection refused")
 
-    monkeypatch.setattr("libs.llm.openai_llm.urlopen", failing_urlopen)
+    monkeypatch.setattr("libs.llm.base_http_llm.urlopen", failing_urlopen)
     api_key = "must-not-appear"
     llm = DeepSeekLLM({"model": "deepseek-chat", "api_key": api_key})
 
@@ -198,7 +198,7 @@ def test_invalid_response_identifies_provider_and_error_type(
     def fake_urlopen(request: Request, timeout: float) -> FakeHTTPResponse:
         return FakeHTTPResponse({"unexpected": "shape"})
 
-    monkeypatch.setattr("libs.llm.openai_llm.urlopen", fake_urlopen)
+    monkeypatch.setattr("libs.llm.base_http_llm.urlopen", fake_urlopen)
     llm = OpenAILLM({"model": "gpt-test", "api_key": "secret"})
 
     with pytest.raises(LLMProviderError, match="openai KeyError"):

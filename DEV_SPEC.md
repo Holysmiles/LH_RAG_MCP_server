@@ -1966,7 +1966,7 @@ dashboard:
 | B5 | Reranker 抽象接口与工厂（含 None 回退） | [x] | 2026-07-27 | BaseReranker 类型保持契约、内置 None 回退、注册式工厂与顺序稳定测试通过验收 |
 | B6 | Evaluator 抽象接口与工厂 | [x] | 2026-07-29 | BaseEvaluator 契约、内置 CustomEvaluator、注册式工厂及 hit_rate/MRR 确定性测试通过 |
 | B7.1 | OpenAI-Compatible LLM 实现 | [x] | 2026-07-29 | OpenAI/DeepSeek 共享兼容客户端、Azure 协议适配、内置工厂路由及 mock HTTP 错误边界测试通过 |
-| B7.2 | Ollama LLM 实现 | [ ] | | |
+| B7.2 | Ollama LLM 实现 | [x] | 2026-08-05 | Ollama 原生 /api/chat、非流式响应、共享 HTTP 安全骨架、工厂路由及连接/超时/坏响应 mock 测试通过 |
 | B7.3 | OpenAI & Azure Embedding 实现 | [ ] | | |
 | B7.4 | Ollama Embedding 实现 | [ ] | | |
 | B7.5 | Recursive Splitter 默认实现 | [ ] | | |
@@ -2067,7 +2067,7 @@ dashboard:
 | 阶段 | 总任务数 | 已完成 | 进度 |
 |------|---------|--------|------|
 | 阶段 A | 3 | 3 | 100% |
-| 阶段 B | 16 | 7 | 43.8% |
+| 阶段 B | 16 | 8 | 50.0% |
 | 阶段 C | 15 | 0 | 0% |
 | 阶段 D | 7 | 0 | 0% |
 | 阶段 E | 6 | 0 | 0% |
@@ -2075,7 +2075,7 @@ dashboard:
 | 阶段 G | 6 | 0 | 0% |
 | 阶段 H | 5 | 0 | 0% |
 | 阶段 I | 5 | 0 | 0% |
-| **总计** | **68** | **10** | **14.7%** |
+| **总计** | **68** | **11** | **16.2%** |
 
 
 ---
@@ -2229,7 +2229,9 @@ dashboard:
 ### B7.2：Ollama LLM（本地后端）
 - **目标**：补齐 `ollama_llm.py`，支持本地 HTTP endpoint（默认 `base_url` + `model`），并可被 mock 测试。
 - **修改文件**：
+  - `src/libs/llm/base_http_llm.py`（新增：复用 HTTP JSON 聊天流程与安全错误处理）
   - `src/libs/llm/ollama_llm.py`
+  - `src/libs/llm/llm_factory.py`（注册 `ollama` provider）
   - `tests/unit/test_ollama_llm.py`（mock HTTP）
 - **验收标准**：
   - provider=ollama 时可由 `LLMFactory` 创建。
