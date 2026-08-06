@@ -12,6 +12,8 @@ from typing import Any, ClassVar
 
 from core.settings import Settings
 from libs.embedding.base_embedding import BaseEmbedding
+from libs.embedding.azure_embedding import AzureEmbedding
+from libs.embedding.openai_embedding import OpenAIEmbedding
 
 
 EmbeddingBuilder = Callable[[Mapping[str, Any]], BaseEmbedding]
@@ -20,7 +22,10 @@ EmbeddingBuilder = Callable[[Mapping[str, Any]], BaseEmbedding]
 class EmbeddingFactory:
     """Create registered embedding implementations from ``Settings.embedding``."""
 
-    _providers: ClassVar[dict[str, EmbeddingBuilder]] = {}
+    _providers: ClassVar[dict[str, EmbeddingBuilder]] = {
+        "azure": AzureEmbedding,
+        "openai": OpenAIEmbedding,
+    }
 
     @classmethod
     def register(

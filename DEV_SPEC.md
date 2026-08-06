@@ -1967,7 +1967,7 @@ dashboard:
 | B6 | Evaluator 抽象接口与工厂 | [x] | 2026-07-29 | BaseEvaluator 契约、内置 CustomEvaluator、注册式工厂及 hit_rate/MRR 确定性测试通过 |
 | B7.1 | OpenAI-Compatible LLM 实现 | [x] | 2026-07-29 | OpenAI/DeepSeek 共享兼容客户端、Azure 协议适配、内置工厂路由及 mock HTTP 错误边界测试通过 |
 | B7.2 | Ollama LLM 实现 | [x] | 2026-08-05 | Ollama 原生 /api/chat、非流式响应、共享 HTTP 安全骨架、工厂路由及连接/超时/坏响应 mock 测试通过 |
-| B7.3 | OpenAI & Azure Embedding 实现 | [ ] | | |
+| B7.3 | OpenAI & Azure Embedding 实现 | [x] | 2026-08-06 | OpenAI/Azure 批量向量化、Azure deployment 复用 OpenAI 核心、顺序恢复、输入/响应/网络错误 mock 测试通过 |
 | B7.4 | Ollama Embedding 实现 | [ ] | | |
 | B7.5 | Recursive Splitter 默认实现 | [ ] | | |
 | B7.6 | ChromaStore 默认实现 | [ ] | | |
@@ -2067,7 +2067,7 @@ dashboard:
 | 阶段 | 总任务数 | 已完成 | 进度 |
 |------|---------|--------|------|
 | 阶段 A | 3 | 3 | 100% |
-| 阶段 B | 16 | 8 | 50.0% |
+| 阶段 B | 16 | 9 | 56.3% |
 | 阶段 C | 15 | 0 | 0% |
 | 阶段 D | 7 | 0 | 0% |
 | 阶段 E | 6 | 0 | 0% |
@@ -2075,7 +2075,7 @@ dashboard:
 | 阶段 G | 6 | 0 | 0% |
 | 阶段 H | 5 | 0 | 0% |
 | 阶段 I | 5 | 0 | 0% |
-| **总计** | **68** | **11** | **16.2%** |
+| **总计** | **68** | **12** | **17.6%** |
 
 
 ---
@@ -2243,6 +2243,7 @@ dashboard:
 - **修改文件**：
   - `src/libs/embedding/openai_embedding.py`
   - `src/libs/embedding/azure_embedding.py`
+  - `src/libs/embedding/embedding_factory.py`（注册 `openai` 和 `azure` provider）
   - `tests/unit/test_embedding_providers_smoke.py`（mock HTTP，包含 OpenAI 和 Azure 测试用例）
 - **验收标准**：
   - provider=openai 时 `EmbeddingFactory` 可创建，支持 OpenAI 官方 API 的 text-embedding-3-small/large 等模型。
