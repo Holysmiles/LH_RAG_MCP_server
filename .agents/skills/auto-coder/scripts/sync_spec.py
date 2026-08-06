@@ -95,3 +95,22 @@ def sync(force: bool = False):
 
 if __name__ == "__main__":
     sync(force="--force" in sys.argv)
+    # skill_dir = Path(__file__).parent.parent          # auto-coder/
+    # repo_root = skill_dir.parent.parent.parent        # project root
+    # dev_spec  = repo_root / "DEV_SPEC.md"
+    # specs_dir = skill_dir / "references"
+    # hash_file = skill_dir / ".spec_hash"
+    # print(f"skill_dir: {skill_dir}")
+    # print(f"specs_dir: {specs_dir}")
+    # print(f"dev_spec: {dev_spec}")
+    # print(f"hash_file: {hash_file}")
+    # print(f"repo_root: {repo_root}")
+    # print(f"Path(__file__): {Path(__file__)}")
+    """
+    skill_dir: d:\study\Code\RAG-BY-Myself\vibecoding_rag\clean\.agents\skills\auto-coder
+    specs_dir: d:\study\Code\RAG-BY-Myself\vibecoding_rag\clean\.agents\skills\auto-coder\references
+    dev_spec: d:\study\Code\RAG-BY-Myself\vibecoding_rag\clean\DEV_SPEC.md
+    hash_file: d:\study\Code\RAG-BY-Myself\vibecoding_rag\clean\.agents\skills\auto-coder\.spec_hash
+    repo_root: d:\study\Code\RAG-BY-Myself\vibecoding_rag\clean
+    Path(__file__): d:\study\Code\RAG-BY-Myself\vibecoding_rag\clean\.agents\skills\auto-coder\scripts\sync_spec.py
+    """

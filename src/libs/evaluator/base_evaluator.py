@@ -11,7 +11,11 @@ if TYPE_CHECKING:
 
 
 class BaseEvaluator(ABC):
-    """Define the minimal contract implemented by evaluation backends."""
+    """Define the minimal contract implemented by evaluation backends.
+    规定评估器必须实现 evaluate(...) 方法
+    用来统一不同评估实现的输入/输出格式
+    
+    """
 
     @abstractmethod
     def evaluate(
