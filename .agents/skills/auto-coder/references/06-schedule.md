@@ -60,7 +60,7 @@
 | B7.3 | OpenAI & Azure Embedding 实现 | [x] | 2026-08-06 | OpenAI/Azure 批量向量化、Azure deployment 复用 OpenAI 核心、顺序恢复、输入/响应/网络错误 mock 测试通过 |
 | B7.4 | Ollama Embedding 实现 | [x] | 2026-08-06 | Ollama /api/embed 批量向量化、默认本地 endpoint、工厂路由及输入/响应/网络错误 mock 测试通过 |
 | B7.5 | Recursive Splitter 默认实现 | [x] | 2026-08-07 | LangChain Markdown 递归切分、标题/代码块保护、配置驱动工厂及边界测试通过 |
-| B7.6 | ChromaStore 默认实现 | [ ] | | |
+| B7.6 | ChromaStore 默认实现 | [x] | 2026-08-07 | Chroma 本地持久化、批量 upsert、余弦向量查询、metadata 过滤及真实 roundtrip 测试通过 |
 | B7.7 | LLM Reranker 实现 | [ ] | | |
 | B7.8 | Cross-Encoder Reranker 实现 | [ ] | | |
 | B8 | Vision LLM 抽象接口与工厂集成 | [ ] | | |
@@ -157,7 +157,7 @@
 | 阶段 | 总任务数 | 已完成 | 进度 |
 |------|---------|--------|------|
 | 阶段 A | 3 | 3 | 100% |
-| 阶段 B | 16 | 11 | 68.8% |
+| 阶段 B | 16 | 12 | 75.0% |
 | 阶段 C | 15 | 0 | 0% |
 | 阶段 D | 7 | 0 | 0% |
 | 阶段 E | 6 | 0 | 0% |
@@ -165,7 +165,7 @@
 | 阶段 G | 6 | 0 | 0% |
 | 阶段 H | 5 | 0 | 0% |
 | 阶段 I | 5 | 0 | 0% |
-| **总计** | **68** | **14** | **20.6%** |
+| **总计** | **68** | **15** | **22.1%** |
 
 
 ---
@@ -371,8 +371,10 @@
 
 ### B7.6：ChromaStore（VectorStore 默认后端）
 - **目标**：补齐 `chroma_store.py`，支持最小 `upsert(records)` 与 `query(vector, top_k, filters)`，并支持本地持久化目录（例如 `data/db/chroma/`）。
+- **实现说明**：使用 `chromadb.PersistentClient` 保存预计算的 dense vector、Chunk 原文和 metadata；集合采用 cosine 距离，适配层将距离转换为统一的相似度 score，并将项目的多字段等值 filters 转换为 Chroma `$and` 查询。
 - **修改文件**：
   - `src/libs/vector_store/chroma_store.py`
+  - `src/libs/vector_store/vector_store_factory.py`（注册 `chroma` provider）
   - `tests/integration/test_chroma_store_roundtrip.py`
 - **验收标准**：
   - provider=chroma 时 `VectorStoreFactory` 可创建。

@@ -12,6 +12,7 @@ from typing import Any, ClassVar
 
 from core.settings import Settings
 from libs.vector_store.base_vector_store import BaseVectorStore
+from libs.vector_store.chroma_store import ChromaStore
 
 
 VectorStoreBuilder = Callable[[Mapping[str, Any]], BaseVectorStore]
@@ -20,7 +21,9 @@ VectorStoreBuilder = Callable[[Mapping[str, Any]], BaseVectorStore]
 class VectorStoreFactory:
     """Create registered backends from ``Settings.vector_store``."""
 
-    _providers: ClassVar[dict[str, VectorStoreBuilder]] = {}
+    _providers: ClassVar[dict[str, VectorStoreBuilder]] = {
+        "chroma": ChromaStore,
+    }
 
     @classmethod
     def register(
