@@ -12,6 +12,7 @@ from typing import Any, ClassVar
 
 from core.settings import Settings
 from libs.splitter.base_splitter import BaseSplitter
+from libs.splitter.recursive_splitter import RecursiveSplitter
 
 
 SplitterBuilder = Callable[[Mapping[str, Any]], BaseSplitter]
@@ -20,7 +21,9 @@ SplitterBuilder = Callable[[Mapping[str, Any]], BaseSplitter]
 class SplitterFactory:
     """Create registered splitter implementations from ``Settings.splitter``."""
 
-    _providers: ClassVar[dict[str, SplitterBuilder]] = {}
+    _providers: ClassVar[dict[str, SplitterBuilder]] = {
+        "recursive": RecursiveSplitter,
+    }
 
     @classmethod
     def register(
