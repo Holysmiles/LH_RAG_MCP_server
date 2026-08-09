@@ -68,19 +68,21 @@ def candidates() -> list[dict[str, Any]]:
 
 @pytest.mark.unit
 def test_factory_creates_builtin_llm_reranker() -> None:
-    """provider=llm creates the reranker and its nested LLM provider."""
-    config = {
+    """provider=llm reuses the application's existing LLM configuration."""
+    rerank_config = {
         "provider": "llm",
         "prompt_path": "config/prompts/rerank.txt",
-        "llm": {"provider": "ollama", "model": "qwen2.5:7b"},
     }
+    llm_config = {"provider": "ollama", "model": "qwen2.5:7b"}
 
-    reranker = RerankerFactory.create(Settings(rerank=config))
+    reranker = RerankerFactory.create(
+        Settings(llm=llm_config, rerank=rerank_config)
+    )
 
     assert isinstance(reranker, LLMReranker)
     assert isinstance(reranker.llm, OllamaLLM)
-    assert reranker.config == config
-    assert reranker.config is not config
+    assert reranker.config == {**rerank_config, "llm": llm_config}
+    assert reranker.config["llm"] is not llm_config
 
 
 @pytest.mark.unit

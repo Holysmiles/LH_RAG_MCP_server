@@ -61,7 +61,7 @@
 | B7.4 | Ollama Embedding 实现 | [x] | 2026-08-06 | Ollama /api/embed 批量向量化、默认本地 endpoint、工厂路由及输入/响应/网络错误 mock 测试通过 |
 | B7.5 | Recursive Splitter 默认实现 | [x] | 2026-08-07 | LangChain Markdown 递归切分、标题/代码块保护、配置驱动工厂及边界测试通过 |
 | B7.6 | ChromaStore 默认实现 | [x] | 2026-08-07 | Chroma 本地持久化、批量 upsert、余弦向量查询、metadata 过滤及真实 roundtrip 测试通过 |
-| B7.7 | LLM Reranker 实现 | [ ] | | |
+| B7.7 | LLM Reranker 实现 | [x] | 2026-08-09 | 复用全局 LLM Provider、Prompt 注入、严格 ranked_ids 校验及异常回退信号测试通过 |
 | B7.8 | Cross-Encoder Reranker 实现 | [ ] | | |
 | B8 | Vision LLM 抽象接口与工厂集成 | [ ] | | |
 | B9 | Azure Vision LLM 实现 | [ ] | | |
@@ -157,7 +157,7 @@
 | 阶段 | 总任务数 | 已完成 | 进度 |
 |------|---------|--------|------|
 | 阶段 A | 3 | 3 | 100% |
-| 阶段 B | 16 | 12 | 75.0% |
+| 阶段 B | 16 | 13 | 81.2% |
 | 阶段 C | 15 | 0 | 0% |
 | 阶段 D | 7 | 0 | 0% |
 | 阶段 E | 6 | 0 | 0% |
@@ -165,7 +165,7 @@
 | 阶段 G | 6 | 0 | 0% |
 | 阶段 H | 5 | 0 | 0% |
 | 阶段 I | 5 | 0 | 0% |
-| **总计** | **68** | **15** | **22.1%** |
+| **总计** | **68** | **16** | **23.5%** |
 
 
 ---
@@ -385,11 +385,13 @@
 
 ### B7.7：LLM Reranker（读取 rerank prompt）
 - **目标**：补齐 `llm_reranker.py`，读取 `config/prompts/rerank.txt` 构造 prompt（测试中可注入替代文本），并可在失败时返回可回退信号。
+- **实现说明**：RerankerFactory 在 `provider=llm` 时复用 `settings.llm` 创建模型；LLMReranker 只向模型发送候选 `chunk_id/text`，严格接收 `{"ranked_ids": [...]}`，校验所有 ID 无遗漏、无重复、无杜撰后再按 ID 返回原始候选对象。模型调用或 schema 校验失败时统一抛出 `LLMRerankerError`，供后续 Core 层回退到 RRF 顺序。
 - **修改文件**：
   - `src/libs/reranker/llm_reranker.py`
+  - `src/libs/reranker/reranker_factory.py`（注册 `llm` provider 并注入全局 LLM 配置）
   - `tests/unit/test_llm_reranker.py`（mock LLM）
 - **验收标准**：
-  - backend=llm 时 `RerankerFactory` 可创建。
+  - provider=llm 时 `RerankerFactory` 可创建。
   - 输出严格结构化（例如 ranked ids），不满足 schema 时抛出可读错误。
 - **测试方法**：`pytest -q tests/unit/test_llm_reranker.py`。
 

@@ -101,7 +101,16 @@ class RerankerFactory:
                 f"Registered providers: {registered}"
             )
 
-        reranker = builder(dict(config))
+        builder_config = dict(config)
+        if builder is LLMReranker and "llm" not in builder_config:
+            # The main model already lives in settings.llm.  Reuse that section
+            # when LLM reranking is enabled, so users do not have to duplicate
+            # provider, model, endpoint, and API-key settings under rerank.
+            if not isinstance(settings.llm, Mapping):
+                raise TypeError("Configuration section 'llm' must be a mapping")
+            builder_config["llm"] = dict(settings.llm)
+
+        reranker = builder(builder_config)
         if not isinstance(reranker, BaseReranker):
             raise TypeError(
                 f"Builder for reranker provider '{provider_name}' must return "

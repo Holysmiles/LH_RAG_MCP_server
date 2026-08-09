@@ -1,5 +1,30 @@
 """LLM-based reranker with strict JSON output validation.
 
+Architectural role::
+
+    Dense retrieval + sparse retrieval
+      -> RRF fusion creates a coarse candidate order
+      -> LLMReranker improves that order using the query and chunk text
+      -> Core selects Top-K and Response Builder creates the final response
+
+Public input:
+
+- ``query``: the user's question as a non-empty string;
+- ``candidates``: ordered dictionaries or objects.  Every candidate must expose
+  a unique ``chunk_id`` and its original ``text``.
+
+Public output:
+
+- a new list containing the exact same candidate objects;
+- only their order changes, so scores, metadata, citations, and source links are
+  preserved for later pipeline stages.
+
+Failure output:
+
+- invalid model output or a model call failure raises ``LLMRerankerError``;
+- the later Core reranker orchestration catches that signal and keeps the RRF
+  order instead of breaking the entire search request.
+
 The data flow is deliberately small::
 
     candidates
@@ -50,8 +75,11 @@ class LLMReranker(BaseReranker):
     Dependency injection keeps tests offline while production still follows the
     same provider configuration and factory rules as the rest of the project.
     
-    1. **生产环境**：不传`llm`，从 config 读取 llm 配置，调用`LLMFactory`创建真正的大模型实例；同时从磁盘读取重排序提示词文件（默认`config/prompts/rerank.txt`）。
-    2. **单元测试**：直接传入伪造的`llm`对象、直接传入`prompt_text`字符串，**不用读磁盘、不用真调用网上大模型**，方便写离线单元测试。 
+    1. **生产环境**：不传 ``llm``，从 config 读取 llm 配置，调用
+       ``LLMFactory`` 创建真正的大模型实例；同时从磁盘读取重排序提示词文件
+       （默认 ``config/prompts/rerank.txt``）。
+    2. **单元测试**：直接传入伪造的 ``llm`` 对象和 ``prompt_text`` 字符串，
+       **不用读磁盘、不用真调用网上大模型**，方便编写离线单元测试。
     > 这叫依赖注入：测试的时候塞假的 llm，生产用真实 llm，同一套代码跑两套场景。
     """
 
