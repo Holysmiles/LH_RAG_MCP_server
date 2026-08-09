@@ -1972,7 +1972,7 @@ dashboard:
 | B7.5 | Recursive Splitter 默认实现 | [x] | 2026-08-07 | LangChain Markdown 递归切分、标题/代码块保护、配置驱动工厂及边界测试通过 |
 | B7.6 | ChromaStore 默认实现 | [x] | 2026-08-07 | Chroma 本地持久化、批量 upsert、余弦向量查询、metadata 过滤及真实 roundtrip 测试通过 |
 | B7.7 | LLM Reranker 实现 | [x] | 2026-08-09 | 复用全局 LLM Provider、Prompt 注入、严格 ranked_ids 校验及异常回退信号测试通过 |
-| B7.8 | Cross-Encoder Reranker 实现 | [ ] | | |
+| B7.8 | Cross-Encoder Reranker 实现 | [x] | 2026-08-09 | Top-M 批量打分、稳定降序、延迟加载、工厂路由及超时/坏分数回退信号测试通过 |
 | B8 | Vision LLM 抽象接口与工厂集成 | [ ] | | |
 | B9 | Azure Vision LLM 实现 | [ ] | | |
 
@@ -2067,7 +2067,7 @@ dashboard:
 | 阶段 | 总任务数 | 已完成 | 进度 |
 |------|---------|--------|------|
 | 阶段 A | 3 | 3 | 100% |
-| 阶段 B | 16 | 13 | 81.2% |
+| 阶段 B | 16 | 14 | 87.5% |
 | 阶段 C | 15 | 0 | 0% |
 | 阶段 D | 7 | 0 | 0% |
 | 阶段 E | 6 | 0 | 0% |
@@ -2075,7 +2075,7 @@ dashboard:
 | 阶段 G | 6 | 0 | 0% |
 | 阶段 H | 5 | 0 | 0% |
 | 阶段 I | 5 | 0 | 0% |
-| **总计** | **68** | **16** | **23.5%** |
+| **总计** | **68** | **17** | **25.0%** |
 
 
 ---
@@ -2307,11 +2307,13 @@ dashboard:
 
 ### B7.8：Cross-Encoder Reranker（本地/托管模型，占位可跑）
 - **目标**：补齐 `cross_encoder_reranker.py`，支持对 Top-M candidates 打分排序；测试中用 mock scorer 保证 deterministic。
+- **实现说明**：输入为非空 `query` 与包含 `text` 的候选对象序列；仅把前 `top_m` 条转换为 `[query, candidate.text]` 文本对并批量打分。输出仍是调用方传入的原始候选对象，只调整前 Top-M 的顺序；同分时保持 RRF 原顺序，未打分的尾部也保持原顺序。真实 `sentence-transformers.CrossEncoder` 在第一次 `rerank()` 时才延迟加载，模型加载、预测、超时或非法分数统一抛出 `CrossEncoderRerankerError`，供 D6 回退到 RRF 排序。
 - **修改文件**：
   - `src/libs/reranker/cross_encoder_reranker.py`
+  - `src/libs/reranker/reranker_factory.py`（注册 `cross_encoder` provider）
   - `tests/unit/test_cross_encoder_reranker.py`（mock scorer）
 - **验收标准**：
-  - backend=cross_encoder 时 `RerankerFactory` 可创建。
+  - provider=cross_encoder 时 `RerankerFactory` 可创建。
   - 提供超时/失败回退信号（供 Core 层 `D6` fallback 使用）。
 - **测试方法**：`pytest -q tests/unit/test_cross_encoder_reranker.py`。
 

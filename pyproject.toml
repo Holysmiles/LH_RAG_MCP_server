@@ -21,6 +21,7 @@ dependencies = [
     "ragas>=0.3.9,<0.4.0",
     "langchain-community>=0.3.31,<0.4.0",
     "datasets>=2.0.0",
+    "sentence-transformers>=5.0,<6.0",
 ]
 
 [project.optional-dependencies]

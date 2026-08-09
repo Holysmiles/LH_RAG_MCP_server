@@ -12,6 +12,7 @@ from typing import Any, ClassVar
 
 from core.settings import Settings
 from libs.reranker.base_reranker import BaseReranker, CandidateT
+from libs.reranker.cross_encoder_reranker import CrossEncoderReranker
 from libs.reranker.llm_reranker import LLMReranker
 
 
@@ -38,6 +39,7 @@ class RerankerFactory:
     """Create registered reranking backends from ``Settings.rerank``."""
 
     _providers: ClassVar[dict[str, RerankerBuilder]] = {
+        "cross_encoder": CrossEncoderReranker,
         "llm": LLMReranker,
         "none": NoneReranker,
     }
