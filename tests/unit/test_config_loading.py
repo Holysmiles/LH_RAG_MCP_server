@@ -51,6 +51,23 @@ def test_load_settings_returns_structured_settings(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_load_settings_keeps_optional_vision_llm_configuration(
+    tmp_path: Path,
+) -> None:
+    """Vision 配置是图片链路的输入，必须从 YAML 原样交给 Vision 工厂。"""
+    config = deepcopy(VALID_CONFIG)
+    config["vision_llm"] = {
+        "provider": "azure",
+        "model": "gpt-4o",
+        "max_image_size": 2048,
+    }
+
+    settings = load_settings(write_config(tmp_path, config))
+
+    assert settings.vision_llm == config["vision_llm"]
+
+
+@pytest.mark.unit
 def test_load_settings_expands_available_environment_variables(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -1973,7 +1973,7 @@ dashboard:
 | B7.6 | ChromaStore 默认实现 | [x] | 2026-08-07 | Chroma 本地持久化、批量 upsert、余弦向量查询、metadata 过滤及真实 roundtrip 测试通过 |
 | B7.7 | LLM Reranker 实现 | [x] | 2026-08-09 | 复用全局 LLM Provider、Prompt 注入、严格 ranked_ids 校验及异常回退信号测试通过 |
 | B7.8 | Cross-Encoder Reranker 实现 | [x] | 2026-08-09 | Top-M 批量打分、稳定降序、延迟加载、工厂路由及超时/坏分数回退信号测试通过 |
-| B8 | Vision LLM 抽象接口与工厂集成 | [ ] | | |
+| B8 | Vision LLM 抽象接口与工厂集成 | [x] | 2026-08-09 | BaseVisionLLM 多模态契约、独立 Vision Provider 注册表、图片预处理扩展点及 Fake 工厂路由测试通过 |
 | B9 | Azure Vision LLM 实现 | [ ] | | |
 
 #### 阶段 C：Ingestion Pipeline MVP

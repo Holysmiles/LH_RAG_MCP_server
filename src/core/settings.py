@@ -22,6 +22,9 @@ class Settings:
 
     project: dict[str, Any] = field(default_factory=dict)
     llm: dict[str, Any] = field(default_factory=dict)
+    # Vision 模型独立于文字 LLM：没有图片任务时保持空字典，不会创建外部服务。
+    # 启用 C7/B9 后，这里保存 provider、model、endpoint 和图片尺寸等配置。
+    vision_llm: dict[str, Any] = field(default_factory=dict)
     embedding: dict[str, Any] = field(default_factory=dict)
     splitter: dict[str, Any] = field(default_factory=dict)
     vector_store: dict[str, Any] = field(default_factory=dict)
