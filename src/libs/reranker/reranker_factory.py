@@ -12,6 +12,7 @@ from typing import Any, ClassVar
 
 from core.settings import Settings
 from libs.reranker.base_reranker import BaseReranker, CandidateT
+from libs.reranker.llm_reranker import LLMReranker
 
 
 class NoneReranker(BaseReranker):
@@ -36,7 +37,10 @@ RerankerBuilder = Callable[[Mapping[str, Any]], BaseReranker]
 class RerankerFactory:
     """Create registered reranking backends from ``Settings.rerank``."""
 
-    _providers: ClassVar[dict[str, RerankerBuilder]] = {"none": NoneReranker}
+    _providers: ClassVar[dict[str, RerankerBuilder]] = {
+        "llm": LLMReranker,
+        "none": NoneReranker,
+    }
 
     @classmethod
     def register(
