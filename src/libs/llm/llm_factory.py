@@ -14,6 +14,7 @@ from typing import Any, ClassVar
 
 from core.settings import Settings
 from libs.llm.azure_llm import AzureLLM
+from libs.llm.azure_vision_llm import AzureVisionLLM
 from libs.llm.base_llm import BaseLLM
 from libs.llm.base_vision_llm import BaseVisionLLM
 from libs.llm.deepseek_llm import DeepSeekLLM
@@ -38,9 +39,10 @@ class LLMFactory:
         "ollama": OllamaLLM,
         "openai": OpenAILLM,
     }
-    # B8 只提供接口和工厂。B9 会把 AzureVisionLLM 注册到这张表，避免 B8
-    # 因提前导入尚不存在的具体实现而破坏普通文本 LLM 的启动。
-    _vision_providers: ClassVar[dict[str, VisionLLMBuilder]] = {}
+    # 图片模型有独立注册表。即使 key 同为 azure，也不会和文字 AzureLLM 混用。
+    _vision_providers: ClassVar[dict[str, VisionLLMBuilder]] = {
+        "azure": AzureVisionLLM,
+    }
 
     @classmethod
     def register(

@@ -66,6 +66,32 @@ class BaseHTTPChatLLM(BaseLLM):
         """
         normalized_messages = self._validate_messages(messages)
         payload = self._build_payload(normalized_messages)
+        response_body = self._send_json_payload(payload, operation="chat")
+        return self._extract_content(response_body)
+
+    def _send_json_payload(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        operation: str,
+    ) -> str:
+        """发送一个 JSON 请求，并返回已经解码的响应文本。
+
+        文字聊天和图片聊天的请求体不同，但它们的网络过程完全相同：
+
+        ``Python 字典 -> JSON bytes -> HTTP POST -> UTF-8 response``。
+
+        Args:
+            payload: Provider 已经组装好的 JSON 请求对象。
+            operation: 安全的操作名，例如 ``chat`` 或 ``vision``；只用于错误提示。
+
+        Returns:
+            HTTP 响应的 UTF-8 文本，具体 JSON 字段仍由 Provider 解析。
+
+        Raises:
+            ValueError: 当 payload 不能转换成 JSON 时。
+            LLMProviderError: 当网络、HTTP 状态或响应编码失败时。
+        """
 
         try:
             request_body = json.dumps(payload).encode("utf-8")
@@ -90,20 +116,28 @@ class BaseHTTPChatLLM(BaseLLM):
             # 程序无限等待。
             with urlopen(request, timeout=self.timeout) as response:
                 response_bytes = response.read()
-        except (HTTPError, URLError, TimeoutError, OSError) as exc:
+        except HTTPError as exc:
+            # HTTP 状态码（如 401/429）本身不含密钥，保留它能让调用者区分
+            # “认证失败”和“服务暂时不可用”；URL 与响应正文仍然不会暴露。
+            raise LLMProviderError(
+                f"{self.provider_name} HTTPError {exc.code}: "
+                f"{operation} request failed"
+            ) from None
+        except (URLError, TimeoutError, OSError) as exc:
             # 不拼接原始异常文本，因为其中可能带 URL、Token 或代理信息。
             raise LLMProviderError(
-                f"{self.provider_name} {type(exc).__name__}: chat request failed"
+                f"{self.provider_name} {type(exc).__name__}: "
+                f"{operation} request failed"
             ) from None
 
         try:
             response_body = response_bytes.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise LLMProviderError(
-                f"{self.provider_name} UnicodeDecodeError: invalid chat response"
+                f"{self.provider_name} UnicodeDecodeError: "
+                f"invalid {operation} response"
             ) from None
-
-        return self._extract_content(response_body)
+        return response_body
 
     def _build_payload(
         self, messages: Sequence[ChatMessage]

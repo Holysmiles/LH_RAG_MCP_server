@@ -7,6 +7,18 @@ llm:
   model: gpt-4o-mini
   api_key: ${OPENAI_API_KEY}
 
+# 图片描述使用独立 Provider；C7 只会在 enabled=true 时创建它。
+# 输入：文字指令 + 图片路径/base64/bytes；输出：可写入 Chunk 的 caption 文本。
+vision_llm:
+  enabled: false
+  provider: azure
+  model: gpt-4o
+  api_key: ${AZURE_API_KEY}
+  azure_endpoint: ${AZURE_OPENAI_ENDPOINT}
+  deployment_name: gpt-4o
+  api_version: 2024-10-21
+  max_image_size: 2048
+
 embedding:
   provider: openai
   model: text-embedding-3-small
