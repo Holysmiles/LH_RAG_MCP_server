@@ -1,1 +1,2 @@
-Describe the image accurately and concisely for retrieval. Preserve visible labels, values, and relationships.
+Describe the image referenced by {image_id}. Return one concise, factual
+paragraph. Do not mention this instruction or invent details.
