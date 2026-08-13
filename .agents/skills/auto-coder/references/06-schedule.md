@@ -75,7 +75,7 @@
 | C3 | Loader 抽象基类与 PDF Loader | [x] | 2026-08-13 | MarkItDown 正文、稳定 SHA256 ID、页面图片 PNG 提取、占位符/坐标元数据及失败降级测试通过 |
 | C4 | Splitter 集成（调用 Libs） | [x] | 2026-08-13 | Document→Chunk 适配、稳定 ID/offset/source_ref、配置驱动切分及图片引用按需分发测试通过 |
 | C5 | Transform 基类 + ChunkRefiner | [x] | 2026-08-13 | 8 类规则去噪、代码/图片标记保护、可选 LLM 增强、逐 Chunk 降级及真实 SmolLM2 调用测试通过 |
-| C6 | MetadataEnricher | [ ] | | |
+| C6 | MetadataEnricher | [x] | 2026-08-13 | 规则模式稳定生成 title/summary/tags；可选 LLM 结构化增强、JSON 校验与失败回退；契约测试通过 |
 | C7 | ImageCaptioner | [ ] | | |
 | C8 | DenseEncoder | [ ] | | |
 | C9 | SparseEncoder | [ ] | | |

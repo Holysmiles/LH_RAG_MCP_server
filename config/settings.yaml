@@ -62,3 +62,6 @@ ingestion:
   chunk_refiner:
     # 规则清洗始终执行。启用后再调用共享 llm 配置，失败自动回退到规则结果。
     use_llm: false
+  metadata_enricher:
+    # 规则模式始终可用；开启后使用共享 llm provider 生成结构化元数据，失败自动回退。
+    use_llm: false

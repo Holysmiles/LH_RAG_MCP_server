@@ -1,0 +1,5 @@
+Return only a JSON object with string fields title and summary and an array
+field tags. Do not add facts that are absent from the text. Use the following
+RAG chunk:
+
+{text}
