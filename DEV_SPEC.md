@@ -1989,7 +1989,7 @@ dashboard:
 | C7 | ImageCaptioner | [x] | 2026-08-13 | Vision LLM 可选 caption、按 Chunk 图片引用调用、已处理 caption 去重、禁用/模型失败降级并保留 image_refs；契约测试通过 |
 | C8 | DenseEncoder | [x] | 2026-08-13 | 批量调用 BaseEmbedding、保持 Chunk 顺序、空批次处理、向量数量/维度/有限数校验；契约测试通过 |
 | C9 | SparseEncoder | [x] | 2026-08-14 | 生成 BM25 term TF、doc_length、document_frequency 与 avg_doc_length；支持停用词、中文/数字、空文本；契约测试通过 |
-| C10 | BatchProcessor | [ ] | | |
+| C10 | BatchProcessor | [x] | 2026-08-14 | 按 batch_size 稳定拆批，驱动 dense/sparse 编码并同序聚合，记录每批 trace；空批次与配置边界测试通过 |
 | C11 | BM25Indexer（倒排索引+IDF计算） | [ ] | | |
 | C12 | VectorUpserter（幂等upsert） | [ ] | | |
 | C13 | ImageStorage（图片存储+SQLite索引） | [ ] | | |

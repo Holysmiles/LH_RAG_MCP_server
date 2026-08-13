@@ -6,6 +6,7 @@ from ingestion.embedding.sparse_encoder import (
     SparseEncoder,
     SparseEncodingBatch,
 )
+from ingestion.embedding.batch_processor import BatchProcessResult, BatchProcessor
 
 
 __all__ = [
@@ -13,4 +14,6 @@ __all__ = [
     "SparseChunkEncoding",
     "SparseEncoder",
     "SparseEncodingBatch",
+    "BatchProcessResult",
+    "BatchProcessor",
 ]
