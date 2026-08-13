@@ -1,125 +1,87 @@
 ---
 name: auto-coder
-description: Autonomous spec-driven development agent. Syncs DEV_SPEC.md into chapter-based reference files, identifies the next pending task from the schedule, implements code following spec architecture and patterns, runs tests with up to 3 auto-fix rounds, and persists progress with atomic commits. Use when user says "auto code", "自动开发", "自动写代码", "auto dev", "一键开发", "autopilot", or wants fully automated spec-to-code workflow.
+description: 'Autonomously implements the next DEV_SPEC.md task: syncs the spec, selects a pending task, changes code and tests, runs up to three repair cycles, updates task status, and optionally creates a scoped commit. Use for "auto code", "自动开发", "自动写代码", "auto dev", "一键开发", "autopilot", or other requests to continue spec-driven development.'
 ---
 
 # Auto Coder
 
-One trigger completes **read spec → find task → code → test → persist progress**.
+Complete one task per cycle:
 
-Optional modifiers: append a task ID (e.g. `auto code B2`) to target a specific task, or `--no-commit` to skip git commit.
+`sync spec -> select task -> implement -> verify -> update progress -> optionally commit`
 
----
+Accept an optional task ID, such as `auto code B2`. If the request includes `--no-commit`, finish without asking to commit.
 
-## Pipeline
+## Environment
 
-```
-Sync Spec → Find Task → Implement → Test (≤3 fix rounds) → Persist
-```
-
-Pause only at the end for commit confirmation. Run everything else autonomously.
-
-> **CRITICAL: Run every Python, pip, and pytest command in the `rag` Conda environment.**
-> - **Automation/non-interactive shells**: prefer `conda run -n rag python ...` and `conda run -n rag python -m pytest ...`.
-> - **Interactive shell**: run `conda activate rag` once, then use `python`/`pytest` normally.
-> - **Missing environment**: create it with `conda env create -f environment.yml`.
-
-## Reference Map
-
-All files under `.agents/skills/auto-coder/references/`:
-
-| File | Content | When to Read |
-|------|---------|-------------|
-| `01-overview.md` | Project overview & goals | First task or when needing project context |
-| `02-features.md` | Feature specifications | When implementing feature-related tasks |
-| `03-tech-stack.md` | Tech stack & dependencies | When choosing libraries or patterns |
-| `04-testing.md` | Testing conventions | When writing tests |
-| `05-architecture.md` | Architecture & module design | When creating/modifying modules |
-| `06-schedule.md` | Task schedule & status | Every cycle (Sync Spec step) |
-| `07-future.md` | Future roadmap | When planning or assessing scope |
-
----
-
-### 1. Sync Spec
+Run Python and pytest through the `rag` Conda environment:
 
 ```powershell
-conda run -n rag python .agents/skills/auto-coder/scripts/sync_spec.py
+conda run -n rag python <args>
+conda run -n rag python -m pytest <args>
 ```
 
-Then read the schedule file to get task statuses:
-- Read `.agents/skills/auto-coder/references/06-schedule.md`
+If the environment is missing, stop and report the blocker. Create it only when the user explicitly authorizes environment setup.
 
-Task markers:
+## Workflow
 
-| Marker | Status |
-|--------|--------|
-| `[ ]` / `⬜` | Not started |
-| `[~]` / `🔶` / `(进行中)` | In progress |
-| `[x]` / `✅` / `(已完成)` | Completed |
+### 1. Sync and Select
 
----
+1. Inspect `git status`; preserve unrelated and pre-existing changes.
+2. Run:
 
-### 2. Find Task
+   ```powershell
+   conda run -n rag python .agents/skills/auto-coder/scripts/sync_spec.py
+   ```
 
-Pick the first `IN_PROGRESS` task, then the first `NOT_STARTED`. If user specified a task ID, use that directly.
+3. Read `.agents/skills/auto-coder/references/06-schedule.md`.
+4. Select the requested task ID. Otherwise select the first `[~]` task, then the first `[ ]` task.
+5. Stop if no pending task exists or a required predecessor makes the task impossible.
 
-Quick-check predecessor artifacts exist (file-level only). On mismatch, log a warning and continue — only stop if the target task itself is blocked.
+### 2. Read Only What Is Needed
 
----
+Always read the selected task's goal, expected files, dependencies, and acceptance criteria from `06-schedule.md`. Read other references only when relevant:
+
+- `01-overview.md`: project intent or scope
+- `02-features.md`: user-facing behavior
+- `03-tech-stack.md`: dependencies and implementation constraints
+- `04-testing.md`: test strategy
+- `05-architecture.md`: module boundaries and file placement
+- `07-future.md`: roadmap or scope decisions
+
+Resolve ambiguity in this order: explicit user instruction, selected task acceptance criteria, referenced architecture/testing constraints, then existing code patterns. Report contradictions that materially change behavior instead of guessing.
 
 ### 3. Implement
 
-1. **Read relevant spec** from `.agents/skills/auto-coder/references/`:
-   - Architecture: `05-architecture.md`
-   - Tech details: `03-tech-stack.md`
-   - Testing conventions: `04-testing.md`
+1. Inspect the affected code and tests before editing.
+2. Define the smallest file-level plan that satisfies the acceptance criteria.
+3. Implement within existing module boundaries and conventions.
+4. Do not hardcode values the spec designates as configurable.
+5. Add or update tests for changed behavior.
+6. Document public contracts and non-obvious rationale; prefer clear code over redundant docstrings or line-by-line comments.
 
-2. **Extract** from spec: inputs/outputs, design principles (Pluggable? Config-driven? Factory?), file list, acceptance criteria.
+### 4. Verify and Repair
 
-3. **Plan** files to create/modify before writing any code.
-
-4. **Code** — project-specific rules:
-   - Treat spec as single source of truth
-   - Use `config/settings.yaml` values, never hardcode
-   - Match existing codebase patterns and style
-
-5. **Write tests** alongside code:
-   - Place in `tests/unit/` or `tests/integration/` per spec
-   - Mock external deps in unit tests
-
-6. **Self-review** before running tests: verify all planned files exist and tests import correctly.
-
----
-
-### 4. Test & Auto-Fix
-
-```
-
-Round 0..2:
-  Run `conda run -n rag python -m pytest <relevant-test-file>`
-  If pass → go to step 5
-  If fail → analyze error, apply fix, re-run
-
-Round 3 still failing → STOP, show failure report to user
-```
-
----
+1. Run the narrowest relevant tests first, then the closest broader suite needed to detect regressions.
+2. If a task-caused failure occurs, diagnose, fix, and rerun. Allow at most three fix-and-test cycles.
+3. Do not spend repair cycles changing code for unrelated failures or unavailable external services.
+4. If verification still fails, stop without marking the task complete. Report the failing command, root cause, attempted fixes, and remaining blocker.
 
 ### 5. Persist
 
-1. **Update `DEV_SPEC.md`** (global file): change task marker `[ ]` → `[x]`
-2. **Re-sync**: `conda run -n rag python .agents/skills/auto-coder/scripts/sync_spec.py --force`
-3. **Show summary & ask**:
+Only after the acceptance criteria are satisfied and required tests pass:
 
-```
-✅ [A3] 配置加载与校验 — done
-   Files: src/core/settings.py, tests/unit/test_settings.py
-   Tests: 8/8 passed
-   Commit: feat(config): [A3] implement config loader
+1. Mark the selected task complete in `DEV_SPEC.md`.
+2. Run:
 
-   "commit" → git add + commit
-   "skip"   → end
-   "next"   → commit + start next task
-```
+   ```powershell
+   conda run -n rag python .agents/skills/auto-coder/scripts/sync_spec.py --force
+   ```
 
-On "next", loop back to step 1 and start the next task.
+3. Summarize the task, changed files, and test results.
+4. If `--no-commit` was supplied, leave changes uncommitted and stop.
+5. Otherwise ask once whether to:
+   - `commit`: stage only task-owned files and create one task-scoped commit
+   - `skip`: leave changes uncommitted
+   - `next`: create the scoped commit, then start the next cycle
+
+Never stage unrelated changes. Never mark a blocked or failing task complete.
