@@ -77,7 +77,7 @@
 | C5 | Transform 基类 + ChunkRefiner | [x] | 2026-08-13 | 8 类规则去噪、代码/图片标记保护、可选 LLM 增强、逐 Chunk 降级及真实 SmolLM2 调用测试通过 |
 | C6 | MetadataEnricher | [x] | 2026-08-13 | 规则模式稳定生成 title/summary/tags；可选 LLM 结构化增强、JSON 校验与失败回退；契约测试通过 |
 | C7 | ImageCaptioner | [x] | 2026-08-13 | Vision LLM 可选 caption、按 Chunk 图片引用调用、已处理 caption 去重、禁用/模型失败降级并保留 image_refs；契约测试通过 |
-| C8 | DenseEncoder | [ ] | | |
+| C8 | DenseEncoder | [x] | 2026-08-13 | 批量调用 BaseEmbedding、保持 Chunk 顺序、空批次处理、向量数量/维度/有限数校验；契约测试通过 |
 | C9 | SparseEncoder | [ ] | | |
 | C10 | BatchProcessor | [ ] | | |
 | C11 | BM25Indexer（倒排索引+IDF计算） | [ ] | | |
