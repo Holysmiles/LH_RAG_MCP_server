@@ -25,6 +25,7 @@ data/documents/*
 data/images/*
 data/db/chroma/*
 data/db/bm25/*
+data/db/ingestion_history.db*
 cache/embeddings/*
 cache/captions/*
 cache/processing/*
