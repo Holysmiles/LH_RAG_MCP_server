@@ -105,6 +105,20 @@ def test_fenced_code_block_is_kept_as_one_chunk() -> None:
 
 
 @pytest.mark.unit
+def test_image_placeholder_is_kept_as_one_chunk() -> None:
+    """Loader 图片 ID 很长，但结构标记不能因 chunk_size 很小而失去完整性。"""
+    placeholder = f"[IMAGE: {'a' * 64}_1_1]"
+    source = f"Before image.\n\n{placeholder}\n\nAfter image."
+
+    chunks = RecursiveSplitter(
+        {"chunk_size": 20, "chunk_overlap": 0}
+    ).split_text(source)
+
+    assert any(chunk.strip() == placeholder for chunk in chunks)
+    assert sum(placeholder in chunk for chunk in chunks) == 1
+
+
+@pytest.mark.unit
 def test_tilde_and_unclosed_fences_are_safe() -> None:
     """波浪线围栏和未闭合围栏都应作为完整代码片段保留。"""
     source = "~~~sql\nSELECT 1;\n~~~   \n\n~~~python\nprint('unfinished')\n"

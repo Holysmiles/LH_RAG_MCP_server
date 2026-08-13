@@ -73,7 +73,7 @@
 | C1 | 定义核心数据类型/契约（Document/Chunk/ChunkRecord） | [x] | 2026-08-09 | 三类共享 dataclass、稳定 dict/JSON 序列化、source_path/images/offset/vector 契约测试通过 |
 | C2 | 文件完整性检查（SHA256） | [x] | 2026-08-11 | 分块 SHA256、SQLite 状态机、WAL 并发写入、默认路径与持久化测试通过 |
 | C3 | Loader 抽象基类与 PDF Loader | [x] | 2026-08-13 | MarkItDown 正文、稳定 SHA256 ID、页面图片 PNG 提取、占位符/坐标元数据及失败降级测试通过 |
-| C4 | Splitter 集成（调用 Libs） | [ ] | | |
+| C4 | Splitter 集成（调用 Libs） | [x] | 2026-08-13 | Document→Chunk 适配、稳定 ID/offset/source_ref、配置驱动切分及图片引用按需分发测试通过 |
 | C5 | Transform 基类 + ChunkRefiner | [ ] | | |
 | C6 | MetadataEnricher | [ ] | | |
 | C7 | ImageCaptioner | [ ] | | |
@@ -158,14 +158,14 @@
 |------|---------|--------|------|
 | 阶段 A | 3 | 3 | 100% |
 | 阶段 B | 16 | 16 | 100% |
-| 阶段 C | 15 | 3 | 20.0% |
+| 阶段 C | 15 | 4 | 26.7% |
 | 阶段 D | 7 | 0 | 0% |
 | 阶段 E | 6 | 0 | 0% |
 | 阶段 F | 5 | 0 | 0% |
 | 阶段 G | 6 | 0 | 0% |
 | 阶段 H | 5 | 0 | 0% |
 | 阶段 I | 5 | 0 | 0% |
-| **总计** | **68** | **22** | **32.4%** |
+| **总计** | **68** | **23** | **33.8%** |
 
 
 ---

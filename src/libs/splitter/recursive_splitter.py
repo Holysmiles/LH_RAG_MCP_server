@@ -52,6 +52,9 @@ class RecursiveSplitter(BaseSplitter):
     _heading_pattern: ClassVar[re.Pattern[str]] = re.compile(
         r"^[ \t]{0,3}#{1,6}[ \t]+.*(?:\r?\n)?$"
     )
+    _image_placeholder_pattern: ClassVar[re.Pattern[str]] = re.compile(
+        r"^[ \t]*\[IMAGE:\s*[^\]\r\n]+?\s*\][ \t]*(?:\r?\n)?$"
+    )
 
     def __init__(self, config: Mapping[str, object]) -> None:
         """Validate settings and create the underlying LangChain splitter."""
@@ -128,6 +131,7 @@ class RecursiveSplitter(BaseSplitter):
 
         - fenced code blocks using three or more backticks or tildes;
         - an unusually long ATX heading that exceeds ``chunk_size`` by itself.
+        - a complete ``[IMAGE: id]`` line emitted by document loaders.
 
         Ordinary headings stay in normal text so LangChain can keep them with
         the following paragraph.  Only overlong headings need special handling
@@ -165,6 +169,11 @@ class RecursiveSplitter(BaseSplitter):
                 and len(line.rstrip("\r\n")) > self.chunk_size
             )
             if is_overlong_heading:
+                flush_normal()
+                segments.append((line, True))
+                continue
+
+            if self._is_image_placeholder_line(line):
                 flush_normal()
                 segments.append((line, True))
                 continue
@@ -217,6 +226,11 @@ class RecursiveSplitter(BaseSplitter):
     def _is_heading_line(cls, text: str) -> bool:
         """Return whether ``text`` is one complete ATX Markdown heading."""
         return bool(cls._heading_pattern.fullmatch(text))
+
+    @classmethod
+    def _is_image_placeholder_line(cls, text: str) -> bool:
+        """Keep a loader image reference atomic even when it exceeds chunk_size."""
+        return bool(cls._image_placeholder_pattern.fullmatch(text))
 
     @classmethod
     def _read_positive_int(
