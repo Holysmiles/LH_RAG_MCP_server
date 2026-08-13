@@ -1,1 +1,6 @@
-Refine the chunk into a self-contained passage. Remove noise without changing facts or source meaning.
+Rewrite the following RAG chunk into a concise, self-contained passage.
+Preserve every fact, identifier, number, Markdown heading, code block, and
+[IMAGE: id] reference. Do not add facts or commentary. Return only the refined
+passage.
+
+{text}

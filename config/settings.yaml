@@ -59,3 +59,6 @@ dashboard:
 
 ingestion:
   batch_size: 100
+  chunk_refiner:
+    # 规则清洗始终执行。启用后再调用共享 llm 配置，失败自动回退到规则结果。
+    use_llm: false

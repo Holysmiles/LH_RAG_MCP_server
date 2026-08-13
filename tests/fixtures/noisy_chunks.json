@@ -1,0 +1,42 @@
+[
+  {
+    "name": "typical_noise_scenario",
+    "input": "Page 1 of 3\n\nRAG    combines retrieval and generation.\n\n\n---\n1 / 3",
+    "expected": "RAG combines retrieval and generation."
+  },
+  {
+    "name": "ocr_errors",
+    "input": "The vector\ufffd store uses a soft\u00adhyphen.\fSearch remains available.",
+    "expected": "The vector store uses a softhyphen.\nSearch remains available."
+  },
+  {
+    "name": "page_header_footer",
+    "input": "Page 2 of 10\nImportant content\n第 2 页（共 10 页）",
+    "expected": "Important content"
+  },
+  {
+    "name": "excessive_whitespace",
+    "input": "alpha      beta\n\n\n\nsecond     paragraph",
+    "expected": "alpha beta\n\nsecond paragraph"
+  },
+  {
+    "name": "format_markers",
+    "input": "<!-- generated -->\n# Heading\n***\nKeep **Markdown** content.",
+    "expected": "# Heading\nKeep **Markdown** content."
+  },
+  {
+    "name": "clean_text",
+    "input": "## Architecture\n\nLoader produces a Document.\n\n- Keep metadata\n- Keep offsets",
+    "expected": "## Architecture\n\nLoader produces a Document.\n\n- Keep metadata\n- Keep offsets"
+  },
+  {
+    "name": "code_blocks",
+    "input": "Example:\n\n```python\ndef load(path):\n    return path\n\n```\n\nPage 4 of 4",
+    "expected": "Example:\n\n```python\ndef load(path):\n    return path\n\n```"
+  },
+  {
+    "name": "mixed_noise",
+    "input": "<!-- scan -->\n第3页\n## Result\n\nDense    and sparse retrieval are fused.\n____\n[IMAGE: chart_3_1]",
+    "expected": "## Result\n\nDense and sparse retrieval are fused.\n[IMAGE: chart_3_1]"
+  }
+]
