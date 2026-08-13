@@ -1992,7 +1992,7 @@ dashboard:
 | C10 | BatchProcessor | [x] | 2026-08-14 | 按 batch_size 稳定拆批，驱动 dense/sparse 编码并同序聚合，记录每批 trace；空批次与配置边界测试通过 |
 | C11 | BM25Indexer（倒排索引+IDF计算） | [x] | 2026-08-14 | JSON 持久化 BM25 倒排索引、IDF/postings、查询排序、upsert 替换与按 source 删除；round-trip 测试通过 |
 | C12 | VectorUpserter（幂等upsert） | [x] | 2026-08-14 | 稳定 chunk ID、ChunkRecord 转存储字典、批量幂等 upsert 与向量对齐校验；契约测试通过 |
-| C13 | ImageStorage（图片存储+SQLite索引） | [ ] | | |
+| C13 | ImageStorage（图片存储+SQLite索引） | [x] | 2026-08-14 | 托管图片复制、SQLite image_index、WAL、按 collection/doc_hash 查询、幂等更新与文档删除；契约测试通过 |
 | C14 | Pipeline 编排（MVP 串起来） | [ ] | | |
 | C15 | 脚本入口 ingest.py | [ ] | | |
 
