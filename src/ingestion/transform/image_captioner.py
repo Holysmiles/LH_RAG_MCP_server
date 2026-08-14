@@ -1,13 +1,11 @@
-"""Optional image caption generation for chunks produced by the PDF loader.
+"""为 PDF Loader 产出的 Chunk 可选地生成图片说明。
 
-``Chunk[] -> inspect image_refs -> Vision LLM per image -> Chunk[]``
+整体链路：``Chunk[] -> 检查 image_refs -> 逐图调用 Vision LLM -> 新 Chunk[]``。
 
-The loader owns image extraction and the Vision provider owns image encoding or
-compression.  This transform only coordinates those contracts: it passes the
-stored image path to ``BaseVisionLLM.chat_with_image`` and records the returned
-text.  A disabled provider, missing image file, provider error, or empty
-caption leaves ``image_refs`` intact and marks ``has_unprocessed_images`` so a
-later retry can find the work without blocking ingestion.
+Loader 负责抽取图片，Vision Provider 负责读取、编码和压缩图片；本模块只负责协调：
+把图片路径交给 ``chat_with_image``，再把文字结果写回 metadata。模型关闭、文件缺失、
+服务异常或空响应都不会丢失图片引用，而会标记 ``has_unprocessed_images``，使后续任务
+能够识别并重试未完成的图片。
 """
 
 from __future__ import annotations
@@ -29,18 +27,14 @@ if TYPE_CHECKING:
 
 
 class ImageCaptioner(BaseTransform):
-    """Generate captions when Vision LLM is enabled, with per-image fallback.
+    """在 Vision LLM 启用时生成说明，并把失败隔离到单张图片。
 
-    Inputs:
-        Chunks whose metadata may contain ``image_refs`` and ``images``.  Each
-        image entry must expose an ``id`` and ``path`` as emitted by PdfLoader.
-        ``settings.vision_llm.enabled`` controls model use; a Vision provider
-        can be injected to keep tests deterministic.
-    Outputs:
-        New Chunks with ``metadata.image_captions`` as ``id -> caption`` for
-        successful images.  Successful image entries also receive ``caption``.
-        ``has_unprocessed_images`` is true whenever any referenced image could
-        not be captioned and false only when all references were processed.
+    输入：metadata 可含 ``image_refs`` 和 ``images`` 的 Chunk；每张图片必须有
+    PdfLoader 生成的 ``id`` 和 ``path``，可注入 Vision Provider 供测试使用。
+    输出：同顺序的新 Chunk；成功说明同时写入 ``image_captions[id]`` 和对应图片项的
+    ``caption``。只要有一张未完成，``has_unprocessed_images`` 就为真。
+    失败边界：坏图片元数据使当前 Chunk 整体降级；单张图片的 Provider 异常只标记该图，
+    不阻塞同一 Chunk 的其他图片，也不阻塞整个批次。
     """
 
     def __init__(
@@ -82,10 +76,9 @@ class ImageCaptioner(BaseTransform):
             if not isinstance(chunk, Chunk):
                 raise TypeError(f"chunks[{index}] must be a Chunk")
             try:
-                enriched, captioned, unprocessed = self._caption_one(chunk)
+                enriched, captioned, unprocessed = self._caption_one(chunk, trace)
             except Exception as exc:
-                # Keep the original references even if malformed optional
-                # metadata is encountered.  The ingestion batch can continue.
+                # 可选图片元数据损坏时保留原引用，让摄取批次继续并留下重试线索。
                 metadata = deepcopy(chunk.metadata)
                 metadata["has_unprocessed_images"] = True
                 metadata["caption_fallback_reason"] = (
@@ -109,24 +102,38 @@ class ImageCaptioner(BaseTransform):
             )
         return output
 
-    def _caption_one(self, chunk: Chunk) -> tuple[Chunk, int, int]:
+    def _caption_one(
+        self,
+        chunk: Chunk,
+        trace: TraceContext | None,
+    ) -> tuple[Chunk, int, int]:
         metadata = deepcopy(chunk.metadata)
         if not metadata.get("images") and not metadata.get("image_refs"):
+            metadata.pop("image_captions", None)
             metadata.pop("has_unprocessed_images", None)
             metadata.pop("caption_fallback_reason", None)
             return self._copy_chunk(chunk, metadata), 0, 0
         refs = self._image_entries(metadata)
         if not refs:
+            metadata.pop("image_captions", None)
             metadata.pop("has_unprocessed_images", None)
             metadata.pop("caption_fallback_reason", None)
             return self._copy_chunk(chunk, metadata), 0, 0
 
-        captions = self._existing_captions(metadata.get("image_captions"))
+        ref_ids = {image["id"] for image in refs}
+        captions = {
+            image_id: caption
+            for image_id, caption in self._existing_captions(
+                metadata.get("image_captions")
+            ).items()
+            if image_id in ref_ids
+        }
         failures: list[str] = []
         captioned = 0
         for image in refs:
             image_id = image["id"]
             if image_id in captions:
+                image["caption"] = captions[image_id]
                 continue
             if not self.enabled:
                 failures.append(image_id)
@@ -135,7 +142,7 @@ class ImageCaptioner(BaseTransform):
                 failures.append(image_id)
                 continue
             try:
-                caption = self._caption_image(image)
+                caption = self._caption_image(image, trace)
             except Exception as exc:
                 failures.append(f"{image_id}:{type(exc).__name__}")
                 continue
@@ -145,6 +152,8 @@ class ImageCaptioner(BaseTransform):
 
         if captions:
             metadata["image_captions"] = captions
+        else:
+            metadata.pop("image_captions", None)
         if failures:
             metadata["has_unprocessed_images"] = True
             metadata["caption_fallback_reason"] = self._failure_reason(failures)
@@ -153,15 +162,25 @@ class ImageCaptioner(BaseTransform):
             metadata.pop("caption_fallback_reason", None)
         return self._copy_chunk(chunk, metadata), captioned, int(bool(failures))
 
-    def _caption_image(self, image: Mapping[str, Any]) -> str:
+    def _caption_image(
+        self,
+        image: Mapping[str, Any],
+        trace: TraceContext | None,
+    ) -> str:
+        """把一张图片交给 Provider，并返回长度受控的非空说明。"""
         path = image.get("path")
         if not isinstance(path, str) or not path.strip():
             raise ValueError("image path must be a non-empty string")
         prompt = self.prompt_template.replace("{image_id}", str(image["id"]))
-        response = self.vision_llm.chat_with_image(prompt, path)  # type: ignore[union-attr]
+        response = self.vision_llm.chat_with_image(  # type: ignore[union-attr]
+            prompt,
+            path,
+            trace=trace,
+        )
         if not isinstance(response, str) or not response.strip():
             raise ValueError("vision provider returned an empty caption")
-        return response.strip()
+        normalized = " ".join(response.split())
+        return normalized if len(normalized) <= 1_000 else normalized[:997].rstrip() + "..."
 
     @staticmethod
     def _image_entries(metadata: dict[str, Any]) -> list[dict[str, Any]]:
@@ -172,15 +191,27 @@ class ImageCaptioner(BaseTransform):
         if isinstance(raw_images, (str, bytes)) or not isinstance(raw_images, Sequence):
             raise TypeError("metadata.images must be a sequence")
         by_id: dict[str, dict[str, Any]] = {}
-        for item in raw_images:
+        for index, item in enumerate(raw_images):
             if not isinstance(item, Mapping):
                 raise TypeError("metadata.images entries must be mappings")
             image_id = item.get("id")
-            if isinstance(image_id, str) and image_id.strip():
-                by_id.setdefault(image_id, dict(item))
+            if not isinstance(image_id, str):
+                raise TypeError(f"metadata.images[{index}].id must be a string")
+            if not image_id.strip():
+                raise ValueError(f"metadata.images[{index}].id must not be empty")
+            normalized_id = image_id.strip()
+            normalized_item = dict(item)
+            normalized_item["id"] = normalized_id
+            by_id.setdefault(normalized_id, normalized_item)
         if isinstance(raw_refs, (str, bytes)) or not isinstance(raw_refs, Sequence):
             raise TypeError("metadata.image_refs must be a sequence")
-        ids = [item for item in raw_refs if isinstance(item, str) and item.strip()]
+        ids: list[str] = []
+        for index, item in enumerate(raw_refs):
+            if not isinstance(item, str):
+                raise TypeError(f"metadata.image_refs[{index}] must be a string")
+            if not item.strip():
+                raise ValueError(f"metadata.image_refs[{index}] must not be empty")
+            ids.append(item.strip())
         if not ids:
             ids = list(by_id)
         missing = [image_id for image_id in ids if image_id not in by_id]
@@ -196,11 +227,17 @@ class ImageCaptioner(BaseTransform):
     def _existing_captions(value: object) -> dict[str, str]:
         if not isinstance(value, Mapping):
             return {}
-        return {
-            str(key): item.strip()
-            for key, item in value.items()
-            if isinstance(key, str) and isinstance(item, str) and item.strip()
-        }
+        captions: dict[str, str] = {}
+        for key, item in value.items():
+            if not isinstance(key, str) or not isinstance(item, str) or not item.strip():
+                continue
+            normalized = " ".join(item.split())
+            captions[key] = (
+                normalized
+                if len(normalized) <= 1_000
+                else normalized[:997].rstrip() + "..."
+            )
+        return captions
 
     def _load_prompt(self, prompt_path: str | Path | None) -> str:
         if prompt_path is not None and not isinstance(prompt_path, (str, Path)):

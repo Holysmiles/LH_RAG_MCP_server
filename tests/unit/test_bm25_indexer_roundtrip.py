@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 from pathlib import Path
 
@@ -82,3 +83,29 @@ def test_empty_query_and_input_validation(tmp_path: Path) -> None:
         indexer.build("bad", persist=False)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="source"):
         indexer.remove_document("")
+
+
+@pytest.mark.unit
+def test_custom_scoring_parameters_survive_save_and_load(tmp_path: Path) -> None:
+    path = tmp_path / "bm25"
+    indexer = BM25Indexer(path, k1=2.1, b=0.4)
+    indexer.build(encoded())  # type: ignore[arg-type]
+
+    loaded = BM25Indexer.load(path)
+
+    assert loaded.k1 == pytest.approx(2.1)
+    assert loaded.b == pytest.approx(0.4)
+    assert loaded.query("endpoint", 3) == indexer.query("endpoint", 3)
+
+
+@pytest.mark.unit
+def test_load_rejects_impossible_persisted_term_frequency(tmp_path: Path) -> None:
+    path = tmp_path / "bm25"
+    indexer = BM25Indexer(path)
+    indexer.build(encoded())  # type: ignore[arg-type]
+    payload = json.loads((path / "index.json").read_text(encoding="utf-8"))
+    payload["records"]["doc-0"]["term_weights"]["endpoint"] = 0
+    (path / "index.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="positive"):
+        BM25Indexer.load(path)

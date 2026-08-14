@@ -10,6 +10,7 @@ from core import Chunk
 from core.settings import Settings
 from core.trace import TraceContext
 from ingestion.embedding import DenseEncoder
+from ingestion.embedding.dense_encoder import EmbeddingFactory
 from libs.embedding.base_embedding import BaseEmbedding
 
 
@@ -104,3 +105,26 @@ def test_public_input_and_constructor_validation() -> None:
         encoder.encode("bad")  # type: ignore[arg-type]
     with pytest.raises(TypeError, match=r"chunks\[0\]"):
         encoder.encode([object()])  # type: ignore[list-item]
+
+
+@pytest.mark.unit
+def test_provider_is_created_lazily_only_for_the_first_non_empty_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    embedding = FakeEmbedding()
+    create_calls: list[Settings] = []
+
+    def create(settings_value: Settings) -> BaseEmbedding:
+        create_calls.append(settings_value)
+        return embedding
+
+    monkeypatch.setattr(EmbeddingFactory, "create", create)
+    encoder = DenseEncoder(settings())
+
+    assert create_calls == []
+    assert encoder.encode([]) == []
+    assert create_calls == []
+    encoder.encode([make_chunk(0)])
+    encoder.encode([make_chunk(1)])
+
+    assert len(create_calls) == 1

@@ -92,3 +92,25 @@ def test_missing_chunk_identity_fields_are_rejected() -> None:
     chunk.metadata.pop("chunk_index")
     with pytest.raises(ValueError, match="chunk_index"):
         upserter.upsert([chunk], [[1.0]])
+
+
+@pytest.mark.unit
+def test_source_path_separator_does_not_change_stable_id() -> None:
+    forward = make_chunk()
+    backward = make_chunk()
+    backward.metadata["source_path"] = "reports\\source.pdf"
+
+    assert VectorUpserter.generate_chunk_id(forward) == (
+        VectorUpserter.generate_chunk_id(backward)
+    )
+    assert len(VectorUpserter.generate_chunk_id(forward)) == len("chunk_") + 64
+
+
+@pytest.mark.unit
+def test_empty_batch_does_not_call_vector_store() -> None:
+    store = FakeVectorStore()
+
+    records = VectorUpserter(settings(), store=store).upsert([], [])
+
+    assert records == []
+    assert store.calls == []

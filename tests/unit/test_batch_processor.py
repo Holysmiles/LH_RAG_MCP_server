@@ -20,6 +20,25 @@ class FakeEmbedding(BaseEmbedding):
         return [[float(index), 1.0] for index, _ in enumerate(texts)]
 
 
+class VariableDimensionDenseEncoder(DenseEncoder):
+    def __init__(self) -> None:
+        pass
+
+    def encode(
+        self, chunks: list[Chunk], trace: TraceContext | None = None
+    ) -> list[list[float]]:
+        dimension = 2 if chunks[0].metadata["chunk_index"] == 0 else 3
+        return [[1.0] * dimension for _ in chunks]
+
+
+class FalseyDenseEncoder(DenseEncoder):
+    def __init__(self, settings_value: Settings) -> None:
+        super().__init__(settings_value, embedding=FakeEmbedding())
+
+    def __bool__(self) -> bool:
+        return False
+
+
 def settings(batch_size: int = 100) -> Settings:
     return Settings(
         embedding={"provider": "openai", "model": "test", "api_key": "test"},
@@ -109,3 +128,29 @@ def test_invalid_batch_configuration_and_inputs_are_rejected() -> None:
         batch_processor.process("bad")  # type: ignore[arg-type]
     with pytest.raises(TypeError, match=r"chunks\[0\]"):
         batch_processor.process([object()])  # type: ignore[list-item]
+
+
+@pytest.mark.unit
+def test_vector_dimension_cannot_change_between_provider_batches() -> None:
+    batch_processor = BatchProcessor(
+        settings(1),
+        dense_encoder=VariableDimensionDenseEncoder(),
+        sparse_encoder=SparseEncoder(),
+    )
+
+    with pytest.raises(ValueError, match="between batches"):
+        batch_processor.process([make_chunk(0), make_chunk(1)])
+
+
+@pytest.mark.unit
+def test_falsey_injected_encoder_is_not_silently_replaced() -> None:
+    settings_value = settings()
+    dense_encoder = FalseyDenseEncoder(settings_value)
+
+    batch_processor = BatchProcessor(
+        settings_value,
+        dense_encoder=dense_encoder,
+        sparse_encoder=SparseEncoder(),
+    )
+
+    assert batch_processor.dense_encoder is dense_encoder

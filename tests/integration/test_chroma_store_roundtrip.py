@@ -182,6 +182,35 @@ def test_empty_metadata_roundtrips_as_an_empty_dictionary(
 
 
 @pytest.mark.integration
+def test_nested_metadata_roundtrips_without_losing_filterable_scalars(
+    tmp_path: Path,
+) -> None:
+    store = ChromaStore(make_config(tmp_path / "nested-metadata-db"))
+    metadata = {
+        "collection": "guides",
+        "tags": ["rag", "azure"],
+        "images": [{"id": "image-1", "path": "data/image-1.png"}],
+        "image_captions": {"image-1": "architecture chart"},
+    }
+    store.upsert(
+        [
+            {
+                "id": "chunk-nested",
+                "text": "Nested metadata must survive Chroma.",
+                "metadata": metadata,
+                "dense_vector": [1.0, 0.0],
+            }
+        ]
+    )
+
+    results = store.query(
+        [1.0, 0.0], top_k=1, filters={"collection": "guides"}
+    )
+
+    assert results[0]["metadata"] == metadata
+
+
+@pytest.mark.integration
 @pytest.mark.parametrize(
     ("records", "message"),
     [

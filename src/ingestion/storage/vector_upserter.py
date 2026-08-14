@@ -1,13 +1,11 @@
-"""Convert encoded Chunks into idempotent vector-store records.
+"""把已经编码的 Chunk 转换成可幂等写入向量库的记录。
 
-``Chunk[] + dense_vectors[] -> stable IDs -> BaseVectorStore.upsert``
+整体链路：``Chunk[] + dense_vectors[] -> 稳定 ID -> BaseVectorStore.upsert``。
 
-The upserter is the boundary between ingestion business objects and a vector
-store adapter.  It does not embed text and does not decide retrieval policy.
-Its stable ID combines ``source_path``, ``chunk_index`` and a content hash, so
-re-ingesting identical content replaces one record while changed content gets
-a new ID.  Validation happens before the store call to prevent partial writes
-caused by mismatched chunks and vectors.
+本模块是摄取业务对象与向量库适配器之间的边界，不负责生成向量，也不决定检索策略。
+稳定 ID 由规范化源路径、Chunk 序号和完整内容哈希共同决定：相同内容重复摄取会覆盖同一
+记录，内容改变则产生新记录。所有输入必须在调用 Store 前完成校验，避免错位数据造成
+部分写入。
 """
 
 from __future__ import annotations
@@ -28,19 +26,12 @@ if TYPE_CHECKING:
 
 
 class VectorUpserter:
-    """Build serializable vector records and write them in one idempotent batch.
+    """构建可序列化向量记录，并以一个幂等批次写入。
 
-    Inputs:
-        Settings for the configured VectorStore, ``Chunk`` objects, and one
-        dense vector per Chunk in identical order.  A store can be injected to
-        keep unit tests offline.
-    Outputs:
-        The stable ``ChunkRecord`` objects sent to ``BaseVectorStore.upsert``;
-        the method returns their records so callers can persist audit data.
-    Failure boundaries:
-        Invalid input or vector shape raises before any store call.  Store or
-        network failures propagate because claiming success after a partial
-        write would make the ingestion integrity state incorrect.
+    输入：向量库 Settings、Chunk 序列和严格同序的一组稠密向量；测试可注入 Store。
+    输出：实际发送给 Store 的稳定 ChunkRecord，供调用方审计或继续持久化。
+    失败边界：输入、向量数量或维度非法时，Store 一次也不会被调用；数据库或网络异常
+    原样上抛，避免把部分写入错误标记成完整成功。
     """
 
     def __init__(
@@ -61,7 +52,7 @@ class VectorUpserter:
         dense_vectors: Sequence[Sequence[Real]],
         trace: TraceContext | None = None,
     ) -> list[ChunkRecord]:
-        """Validate, build, and upsert one aligned batch of vector records."""
+        """校验、构建并写入一个 Chunk 与向量严格对齐的批次。"""
         if isinstance(chunks, (str, bytes)) or not isinstance(chunks, Sequence):
             raise TypeError("chunks must be a non-string sequence")
         if isinstance(dense_vectors, (str, bytes)) or not isinstance(dense_vectors, Sequence):
@@ -70,6 +61,13 @@ class VectorUpserter:
             raise ValueError(
                 f"chunks and dense_vectors must have the same length: {len(chunks)} != {len(dense_vectors)}"
             )
+        if not chunks:
+            if trace is not None:
+                trace.record_stage(
+                    "vector_upserter",
+                    {"input_count": 0, "upsert_count": 0},
+                )
+            return []
         records: list[ChunkRecord] = []
         seen_ids: set[str] = set()
         vector_size: int | None = None
@@ -106,7 +104,7 @@ class VectorUpserter:
 
     @staticmethod
     def generate_chunk_id(chunk: Chunk) -> str:
-        """Generate the deterministic ID shared by repeated ingestion runs."""
+        """生成跨重复摄取和路径分隔符形式都一致的确定性 ID。"""
         if not isinstance(chunk, Chunk):
             raise TypeError("chunk must be a Chunk")
         source_path = chunk.metadata.get("source_path")
@@ -115,9 +113,12 @@ class VectorUpserter:
             raise ValueError("chunk.metadata.source_path must be a non-empty string")
         if isinstance(chunk_index, bool) or not isinstance(chunk_index, int) or chunk_index < 0:
             raise ValueError("chunk.metadata.chunk_index must be a non-negative integer")
-        content_hash = hashlib.sha256(chunk.text.encode("utf-8")).hexdigest()[:8]
-        identity = f"{source_path.strip()}|{chunk_index}|{content_hash}"
-        digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+        normalized_source = source_path.strip().replace("\\", "/")
+        while "//" in normalized_source:
+            normalized_source = normalized_source.replace("//", "/")
+        content_hash = hashlib.sha256(chunk.text.encode("utf-8")).hexdigest()
+        identity = f"{normalized_source}|{chunk_index}|{content_hash}"
+        digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
         return f"chunk_{digest}"
 
     @staticmethod

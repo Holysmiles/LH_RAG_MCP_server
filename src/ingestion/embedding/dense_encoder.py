@@ -1,12 +1,10 @@
-"""Batch dense-vector encoding for ingestion.
+"""批量生成摄取阶段所需的稠密向量。
 
-``Chunk[] -> text batch -> BaseEmbedding -> vector[]``
+整体链路：``Chunk[] -> 文本列表 -> BaseEmbedding -> vector[]``。
 
-This module deliberately stops before persistence.  Its only job is to bridge
-the core ``Chunk`` contract and the provider-independent ``BaseEmbedding``
-contract while checking provider output early.  The caller receives vectors in
-exactly the same order as the input chunks; metadata and Chunk identity remain
-owned by the later ``ChunkRecord``/upsert stages.
+本模块只连接业务 Chunk 与供应商无关的 Embedding 接口，不负责持久化。输出向量与输入
+Chunk 严格同序，并在这里尽早检查数量、维度和数值是否合法；metadata 与 Chunk 身份
+仍由后面的 ChunkRecord 和入库阶段管理。
 """
 
 from __future__ import annotations
@@ -14,6 +12,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from math import isfinite
 from numbers import Real
+from threading import Lock
 from typing import TYPE_CHECKING
 
 from core import Chunk
@@ -26,19 +25,12 @@ if TYPE_CHECKING:
 
 
 class DenseEncoder:
-    """Encode chunks in one provider batch and validate the resulting matrix.
+    """用一次 Provider 批调用编码 Chunk，并校验返回矩阵。
 
-    Inputs:
-        A ``Settings`` object for provider construction, an optional injected
-        ``BaseEmbedding`` for tests, and a sequence of ``Chunk`` objects.
-    Outputs:
-        ``list[list[float]]`` with one non-empty vector per input Chunk.  Every
-        row has the same dimension and keeps input order.
-    Failure boundaries:
-        Invalid caller types and malformed provider output raise immediately;
-        provider/network failures are propagated with their original cause
-        because dense vectors are required for the requested ingestion path.
-        An empty batch returns ``[]`` without constructing or calling a model.
+    输入：用于创建 Provider 的 Settings、可选注入的 BaseEmbedding、Chunk 序列。
+    输出：``list[list[float]]``，每个 Chunk 对应一个同维、非空、有限浮点向量。
+    失败边界：公开参数或 Provider 输出非法时立即报错；网络/模型异常原样上抛，避免后续
+    把缺失向量误当成功数据。空批次直接返回 ``[]``，且不会创建模型客户端。
     """
 
     def __init__(
@@ -51,14 +43,15 @@ class DenseEncoder:
         if embedding is not None and not isinstance(embedding, BaseEmbedding):
             raise TypeError("embedding must implement BaseEmbedding or be None")
         self.settings = settings
-        self.embedding = embedding if embedding is not None else EmbeddingFactory.create(settings)
+        self.embedding = embedding
+        self._embedding_lock = Lock()
 
     def encode(
         self,
         chunks: Sequence[Chunk],
         trace: TraceContext | None = None,
     ) -> list[list[float]]:
-        """Encode one batch, preserving order and rejecting unsafe responses."""
+        """编码一个批次，保持顺序并拒绝不可信的 Provider 响应。"""
         if isinstance(chunks, (str, bytes)) or not isinstance(chunks, Sequence):
             raise TypeError("chunks must be a non-string sequence")
         for index, chunk in enumerate(chunks):
@@ -73,7 +66,7 @@ class DenseEncoder:
             return []
 
         texts = [chunk.text for chunk in chunks]
-        vectors = self.embedding.embed(texts, trace=trace)
+        vectors = self._get_embedding().embed(texts, trace=trace)
         validated = self._validate_vectors(vectors, expected_count=len(chunks))
         if trace is not None:
             trace.record_stage(
@@ -85,6 +78,17 @@ class DenseEncoder:
                 },
             )
         return validated
+
+    def _get_embedding(self) -> BaseEmbedding:
+        """首次遇到非空批次时创建 Provider，后续调用复用同一实例。"""
+        if self.embedding is None:
+            with self._embedding_lock:
+                if self.embedding is None:
+                    created = EmbeddingFactory.create(self.settings)
+                    if not isinstance(created, BaseEmbedding):
+                        raise TypeError("embedding factory must return BaseEmbedding")
+                    self.embedding = created
+        return self.embedding
 
     @staticmethod
     def _validate_vectors(

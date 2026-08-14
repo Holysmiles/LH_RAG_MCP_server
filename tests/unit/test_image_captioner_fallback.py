@@ -16,12 +16,12 @@ from libs.llm.base_vision_llm import BaseVisionLLM, ImageInput
 class FakeVisionLLM(BaseVisionLLM):
     def __init__(self, response: str = "A bar chart showing growth") -> None:
         self.response = response
-        self.calls: list[tuple[str, ImageInput]] = []
+        self.calls: list[tuple[str, ImageInput, TraceContext | None]] = []
 
     def chat_with_image(
         self, text: str, image_path: ImageInput, trace: TraceContext | None = None
     ) -> str:
-        self.calls.append((text, image_path))
+        self.calls.append((text, image_path, trace))
         return self.response
 
 
@@ -99,13 +99,20 @@ def test_enabled_mode_calls_vision_once_per_image_and_writes_captions() -> None:
 @pytest.mark.unit
 def test_existing_caption_is_not_called_again() -> None:
     chunk = make_chunk()
-    chunk.metadata["image_captions"] = {"image-a": "Existing caption"}
+    chunk.metadata["image_captions"] = {
+        "image-a": "Existing caption",
+        "stale-image": "Must be removed",
+    }
     vision = FakeVisionLLM()
 
     output = ImageCaptioner(settings(enabled=True), vision_llm=vision).transform([chunk])[0]
 
     assert len(vision.calls) == 1
-    assert output.metadata["image_captions"]["image-a"] == "Existing caption"
+    assert output.metadata["image_captions"] == {
+        "image-a": "Existing caption",
+        "image-b": "A bar chart showing growth",
+    }
+    assert output.metadata["images"][0]["caption"] == "Existing caption"
     assert output.metadata["has_unprocessed_images"] is False
 
 
@@ -156,4 +163,29 @@ def test_malformed_image_metadata_is_rejected_at_chunk_boundary() -> None:
     assert output.metadata["has_unprocessed_images"] is True
     assert output.metadata["caption_fallback_reason"] == (
         "image_captioning_failed:ValueError"
+    )
+
+
+@pytest.mark.unit
+def test_trace_is_forwarded_to_the_vision_provider() -> None:
+    trace = TraceContext()
+    vision = FakeVisionLLM()
+
+    ImageCaptioner(settings(enabled=True), vision_llm=vision).transform(
+        [make_chunk()], trace
+    )
+
+    assert [call[2] for call in vision.calls] == [trace, trace]
+
+
+@pytest.mark.unit
+def test_non_string_image_reference_enters_safe_fallback() -> None:
+    chunk = make_chunk()
+    chunk.metadata["image_refs"] = ["image-a", 1]
+
+    output = ImageCaptioner(settings(enabled=False)).transform([chunk])[0]
+
+    assert output.metadata["has_unprocessed_images"] is True
+    assert output.metadata["caption_fallback_reason"] == (
+        "image_captioning_failed:TypeError"
     )

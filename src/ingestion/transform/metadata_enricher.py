@@ -1,14 +1,11 @@
-"""Chunk metadata enrichment for the ingestion pipeline.
+"""为摄取流水线补齐 Chunk 元数据。
 
-First-principles contract:
+整体链路：``Chunk[] -> 本地规则生成 -> 可选 LLM 优化 -> 新 Chunk[]``。
 
-``Chunk[] -> deterministic rule enrichment -> optional LLM enrichment -> Chunk[]``
-
-The rules are the reliable baseline.  The LLM can improve wording and discover
-additional tags, but it is never allowed to be the only path: unavailable
-providers, malformed JSON, missing fields, and per-Chunk failures all fall
-back to the rule result.  The returned Chunk is a new object, so a caller can
-compare the original and enriched records without observing partial mutation.
+第一性原理上，检索需要稳定、有限且可持久化的标题、摘要和标签，因此本地规则是
+永远可用的基线，LLM 只能优化结果，不能成为唯一的数据来源。模型不可用、JSON
+损坏、字段缺失或单个 Chunk 处理失败时，本模块都会降级，并返回新的 Chunk，绝不
+在原对象上留下只修改一半的状态。
 """
 
 from __future__ import annotations
@@ -32,21 +29,13 @@ if TYPE_CHECKING:
 
 
 class MetadataEnricher(BaseTransform):
-    """Add ``title``, ``summary`` and ``tags`` to every Chunk.
+    """给每个 Chunk 添加 ``title``、``summary`` 和 ``tags``。
 
-    Inputs:
-        ``Settings`` controls ``ingestion.metadata_enricher.use_llm``;
-        ``Chunk`` objects must retain the core identity fields and a valid
-        ``source_path`` in metadata; an optional ``BaseLLM`` is injectable for
-        tests or an already managed provider.
-    Outputs:
-        New ``Chunk`` objects with non-empty ``title``/``summary``/``tags``.
-        Existing metadata is preserved.  ``enriched_by`` is ``rule`` or
-        ``llm``; when enhancement falls back, ``fallback_reason`` explains why.
-    Failure boundaries:
-        Provider construction, provider calls, invalid JSON, and invalid LLM
-        fields never escape the transform.  Only an invalid public input type
-        raises immediately, because that is a caller contract error.
+    输入：项目配置、按顺序排列的 Chunk；测试或托管环境可注入 ``BaseLLM``。
+    输出：同顺序的新 Chunk；原 metadata 被保留，并通过 ``enriched_by`` 和
+    ``fallback_reason`` 说明实际采用了 LLM、规则还是最小安全降级。
+    失败边界：调用方传错公开参数类型时立即报错；模型构造、模型调用、JSON 解析
+    以及单条数据处理失败只影响当前 Chunk，不会中断整个批次。
     """
 
     default_prompt_path: ClassVar[Path] = Path(
@@ -62,6 +51,9 @@ class MetadataEnricher(BaseTransform):
     _sentence = re.compile(r"(?<=[.!?。！？])\s+")
     _token = re.compile(r"[A-Za-z][A-Za-z0-9_-]{2,}|[\u4e00-\u9fff]{2,}")
     _image = re.compile(r"\[IMAGE:\s*[^\]\r\n]+?\s*\]")
+    _max_title_length: ClassVar[int] = 120
+    _max_summary_length: ClassVar[int] = 300
+    _max_tag_length: ClassVar[int] = 64
 
     def __init__(
         self,
@@ -79,7 +71,6 @@ class MetadataEnricher(BaseTransform):
         self.prompt_template = self._load_prompt(prompt_path)
         self.llm = llm
         self._llm_initialization_reason: str | None = None
-        self._last_llm_failure_reason: str | None = None
 
         if self.use_llm and self.llm is None:
             try:
@@ -94,7 +85,7 @@ class MetadataEnricher(BaseTransform):
         chunks: Sequence[Chunk],
         trace: TraceContext | None = None,
     ) -> list[Chunk]:
-        """Enrich a batch while preserving order and isolating item failures."""
+        """按输入顺序增强一批 Chunk，并隔离每条记录的失败。"""
         if isinstance(chunks, (str, bytes)) or not isinstance(chunks, Sequence):
             raise TypeError("chunks must be a non-string sequence")
 
@@ -110,16 +101,15 @@ class MetadataEnricher(BaseTransform):
             try:
                 enriched, method, fallback_reason = self._enrich_one(chunk)
             except Exception as exc:
-                # A malformed individual record must not discard its siblings.
-                metadata = deepcopy(chunk.metadata)
-                rule_metadata = self._rule_metadata(chunk.text, metadata)
-                rule_metadata["enriched_by"] = "original"
-                rule_metadata["fallback_reason"] = (
+                # 即使规则代码自身异常，也要返回最小可检索元数据，不能再次调用失败规则。
+                safe_metadata = self._minimal_metadata(chunk.metadata)
+                safe_metadata["enriched_by"] = "original"
+                safe_metadata["fallback_reason"] = (
                     f"metadata_enrichment_failed:{type(exc).__name__}"
                 )
-                enriched = self._copy_chunk(chunk, rule_metadata)
+                enriched = self._copy_chunk(chunk, safe_metadata)
                 method = "original"
-                fallback_reason = rule_metadata["fallback_reason"]
+                fallback_reason = safe_metadata["fallback_reason"]
 
             output.append(enriched)
             if method == "llm":
@@ -151,14 +141,12 @@ class MetadataEnricher(BaseTransform):
         method = "rule"
 
         if self.use_llm:
-            llm_metadata = self._llm_metadata(chunk.text)
+            llm_metadata, llm_failure_reason = self._llm_metadata(chunk.text)
             if llm_metadata is not None:
                 metadata.update(llm_metadata)
                 method = "llm"
             else:
-                fallback_reason = (
-                    self._last_llm_failure_reason or "llm_enrichment_failed"
-                )
+                fallback_reason = llm_failure_reason or "llm_enrichment_failed"
 
         metadata["enriched_by"] = method
         if fallback_reason is None:
@@ -172,7 +160,7 @@ class MetadataEnricher(BaseTransform):
         text: str,
         source_metadata: Mapping[str, Any],
     ) -> dict[str, Any]:
-        """Build predictable metadata without network, model, or filesystem IO."""
+        """只用本地确定性规则生成元数据，不访问网络、模型或文件系统。"""
         if not isinstance(text, str):
             raise TypeError("chunk text must be a string")
         if not isinstance(source_metadata, Mapping):
@@ -180,20 +168,26 @@ class MetadataEnricher(BaseTransform):
 
         metadata = deepcopy(dict(source_metadata))
         normalized = text.replace("\r\n", "\n").replace("\r", "\n").strip()
-        title = self._existing_text(metadata.get("title"))
+        title = self._existing_text(
+            metadata.get("title"), self._max_title_length
+        )
         lines = [line.strip() for line in normalized.splitlines() if line.strip()]
         if not title:
             for line in lines:
                 match = self._heading.match(line)
                 if match:
-                    title = self._trim(match.group(1), 120)
+                    title = self._trim(match.group(1), self._max_title_length)
                     break
         if not title and lines:
-            title = self._trim(self._bullet.sub("", lines[0]), 120)
+            title = self._trim(
+                self._bullet.sub("", lines[0]), self._max_title_length
+            )
         if not title:
             title = "Untitled chunk"
 
-        summary = self._existing_text(metadata.get("summary"))
+        summary = self._existing_text(
+            metadata.get("summary"), self._max_summary_length
+        )
         if not summary:
             summary_source = self._image.sub("", normalized)
             summary_source = re.sub(r"```.*?```|~~~.*?~~~", "", summary_source, flags=re.DOTALL)
@@ -204,7 +198,10 @@ class MetadataEnricher(BaseTransform):
                     continue
                 summary_lines.append(self._bullet.sub("", stripped))
             summary_source = " ".join(summary_lines)
-            summary = self._trim(self._sentence.split(summary_source)[0].strip(), 300)
+            summary = self._trim(
+                self._sentence.split(summary_source)[0].strip(),
+                self._max_summary_length,
+            )
         if not summary:
             summary = title
 
@@ -219,33 +216,36 @@ class MetadataEnricher(BaseTransform):
         metadata["tags"] = tags
         return metadata
 
-    def _llm_metadata(self, text: str) -> dict[str, Any] | None:
-        self._last_llm_failure_reason = None
+    def _llm_metadata(
+        self,
+        text: str,
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        """调用模型并返回 ``(有效元数据, 失败原因)``，不使用共享可变状态。"""
         if self.llm is None:
-            self._last_llm_failure_reason = (
+            return None, (
                 self._llm_initialization_reason or "llm_unavailable"
             )
-            return None
         prompt = self.prompt_template.replace("{text}", text)
         try:
             response = self.llm.chat([{"role": "user", "content": prompt}])
         except Exception as exc:
-            self._last_llm_failure_reason = f"llm_call_failed:{type(exc).__name__}"
-            return None
+            return None, f"llm_call_failed:{type(exc).__name__}"
         if not isinstance(response, str) or not response.strip():
-            self._last_llm_failure_reason = "llm_returned_empty_text"
-            return None
+            return None, "llm_returned_empty_text"
         try:
             payload = self._parse_json_response(response)
-            title = self._require_text(payload.get("title"), "title")
-            summary = self._require_text(payload.get("summary"), "summary")
+            title = self._require_text(
+                payload.get("title"), "title", self._max_title_length
+            )
+            summary = self._require_text(
+                payload.get("summary"), "summary", self._max_summary_length
+            )
             tags = self._normalize_tags(payload.get("tags"))
             if not tags:
                 raise ValueError("tags must contain at least one non-empty value")
         except (TypeError, ValueError, json.JSONDecodeError) as exc:
-            self._last_llm_failure_reason = f"llm_invalid_metadata:{type(exc).__name__}"
-            return None
-        return {"title": title, "summary": summary, "tags": tags}
+            return None, f"llm_invalid_metadata:{type(exc).__name__}"
+        return {"title": title, "summary": summary, "tags": tags}, None
 
     @staticmethod
     def _parse_json_response(response: str) -> dict[str, Any]:
@@ -259,11 +259,11 @@ class MetadataEnricher(BaseTransform):
             payload = payload["metadata"]
         return dict(payload)
 
-    @staticmethod
-    def _require_text(value: object, field: str) -> str:
+    @classmethod
+    def _require_text(cls, value: object, field: str, limit: int) -> str:
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"{field} must be a non-empty string")
-        return value.strip()
+        return cls._trim(value, limit)
 
     @classmethod
     def _normalize_tags(cls, value: object) -> list[str]:
@@ -275,8 +275,10 @@ class MetadataEnricher(BaseTransform):
             return []
         result: list[str] = []
         for item in values:
-            if isinstance(item, str) and item.strip() and item.strip() not in result:
-                result.append(item.strip())
+            if isinstance(item, str) and item.strip():
+                normalized = cls._trim(item, cls._max_tag_length)
+                if normalized not in result:
+                    result.append(normalized)
         return result[:12]
 
     @classmethod
@@ -288,14 +290,28 @@ class MetadataEnricher(BaseTransform):
                 result.append(normalized)
         return result[:8]
 
-    @staticmethod
-    def _existing_text(value: object) -> str | None:
-        return value.strip() if isinstance(value, str) and value.strip() else None
+    @classmethod
+    def _existing_text(cls, value: object, limit: int) -> str | None:
+        return cls._trim(value, limit) if isinstance(value, str) and value.strip() else None
 
     @staticmethod
     def _trim(value: str, limit: int) -> str:
         value = " ".join(value.split())
-        return value if len(value) <= limit else value[: limit - 1].rstrip() + "…"
+        return value if len(value) <= limit else value[: limit - 3].rstrip() + "..."
+
+    @classmethod
+    def _minimal_metadata(cls, source_metadata: Mapping[str, Any]) -> dict[str, Any]:
+        """在所有增强逻辑都失败时生成有界、非空且可序列化的最后防线。"""
+        metadata = deepcopy(dict(source_metadata))
+        title = cls._existing_text(
+            metadata.get("title"), cls._max_title_length
+        ) or "Untitled chunk"
+        summary = cls._existing_text(
+            metadata.get("summary"), cls._max_summary_length
+        ) or title
+        tags = cls._normalize_tags(metadata.get("tags")) or ["untagged"]
+        metadata.update({"title": title, "summary": summary, "tags": tags})
+        return metadata
 
     def _load_prompt(self, prompt_path: str | Path | None) -> str:
         if prompt_path is not None and not isinstance(prompt_path, (str, Path)):

@@ -71,6 +71,8 @@ def test_empty_batch_and_empty_text_have_explicit_zero_statistics() -> None:
 @pytest.mark.unit
 def test_invalid_inputs_are_rejected_at_the_public_boundary() -> None:
     with pytest.raises(TypeError, match="stopwords"):
+        SparseEncoder(stopwords="the")
+    with pytest.raises(TypeError, match="stopwords"):
         SparseEncoder(stopwords=["ok", 1])  # type: ignore[list-item]
     encoder = SparseEncoder()
     with pytest.raises(TypeError, match="chunks must be"):

@@ -55,6 +55,7 @@ def test_store_many_and_upsert_are_idempotent(tmp_path: Path) -> None:
     assert len(storage.list_images()) == 2
     assert storage.list_images(collection="collection-a")[0]["image_id"] == "b"
     assert storage.list_images(doc_hash="doc-b")[0]["image_id"] == "a"
+    assert not paths[0].exists()
 
 
 @pytest.mark.unit
@@ -79,3 +80,79 @@ def test_validation_prevents_unsafe_ids_and_bad_sources(tmp_path: Path) -> None:
         storage.store("image-1", tmp_path / "missing.png", "docs")
     with pytest.raises(ValueError, match="collection"):
         storage.list_images(collection="")
+    unsafe = make_source(tmp_path, "active.svg")
+    with pytest.raises(ValueError, match="extension"):
+        storage.store("image-svg", unsafe, "docs")
+
+
+@pytest.mark.unit
+def test_tampered_index_cannot_read_or_delete_outside_managed_root(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "db" / "index.db"
+    storage = ImageStorage(tmp_path / "images", db_path)
+    external = make_source(tmp_path, "external.png")
+    storage.store("image-1", external, "docs", doc_hash="doc-hash")
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE image_index SET file_path = ? WHERE image_id = ?",
+            (str(external), "image-1"),
+        )
+
+    assert storage.get_path("image-1") is None
+    with pytest.raises(ValueError, match="managed root"):
+        storage.delete_document("doc-hash")
+    assert external.exists()
+    assert len(storage.list_images(doc_hash="doc-hash")) == 1
+
+
+@pytest.mark.unit
+def test_failed_database_update_restores_previous_managed_file(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "db" / "index.db"
+    storage = ImageStorage(tmp_path / "images", db_path)
+    first = make_source(tmp_path, "first.png")
+    stored = storage.store("image-1", first, "docs", doc_hash="doc-hash")
+    original_content = stored.read_bytes()
+    replacement = make_source(tmp_path, "replacement.png")
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            CREATE TRIGGER reject_image_update
+            BEFORE UPDATE ON image_index
+            BEGIN
+                SELECT RAISE(FAIL, 'forced update failure');
+            END
+            """
+        )
+
+    with pytest.raises(sqlite3.IntegrityError, match="forced update failure"):
+        storage.store("image-1", replacement, "docs", doc_hash="doc-hash")
+
+    assert stored.read_bytes() == original_content
+    assert storage.get_path("image-1") == stored
+
+
+@pytest.mark.unit
+def test_failed_database_delete_restores_files_and_rows(tmp_path: Path) -> None:
+    db_path = tmp_path / "db" / "index.db"
+    storage = ImageStorage(tmp_path / "images", db_path)
+    source = make_source(tmp_path)
+    stored = storage.store("image-1", source, "docs", doc_hash="doc-hash")
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            CREATE TRIGGER reject_image_delete
+            BEFORE DELETE ON image_index
+            BEGIN
+                SELECT RAISE(FAIL, 'forced delete failure');
+            END
+            """
+        )
+
+    with pytest.raises(sqlite3.IntegrityError, match="forced delete failure"):
+        storage.delete_document("doc-hash")
+
+    assert stored.exists()
+    assert storage.get_path("image-1") == stored

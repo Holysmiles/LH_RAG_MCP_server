@@ -1,25 +1,19 @@
-"""ChromaDB adapter for the project's vector-store contract.
+"""项目向量存储契约的 ChromaDB 适配器。
 
-The dependency chain is intentionally short::
-
-    settings.yaml
-      -> Settings.vector_store
-      -> VectorStoreFactory
-      -> ChromaStore
-      -> chromadb.PersistentClient
-
-ChromaDB does the difficult database work.  This adapter only translates the
-project's stable record format into Chroma's API and translates Chroma's query
-response back into :class:`VectorSearchResult` dictionaries.
+依赖链保持简单：``Settings -> VectorStoreFactory -> ChromaStore -> ChromaDB``。
+ChromaDB 负责数据库能力，本适配器只做两件事：把项目稳定记录转换成 Chroma 的并行
+列表输入，再把 Chroma 的嵌套查询响应还原为 ``VectorSearchResult``。复杂 metadata
+会被完整编码进保留 JSON 字段，同时保留顶层标量供数据库过滤。
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+import json
 import math
 from numbers import Real
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, NoReturn
 
 import chromadb
 
@@ -37,38 +31,32 @@ __all__ = ["ChromaStore"]
 
 
 class ChromaStore(BaseVectorStore):
-    """Store dense vectors and their source text in a local Chroma database.
+    """把稠密向量、原文和元数据存入本地 Chroma 数据库。
 
-    One project record looks like this::
+    单条项目记录形状如下：
 
         {
             "id": "chunk-001",
-            "text": "The original chunk text",
+            "text": "原始 Chunk 文本",
             "metadata": {"source_path": "guide.pdf"},
             "dense_vector": [0.12, 0.34, ...],
         }
 
-    Chroma expects the same data as four parallel lists.  Item zero in every
-    list belongs to the same record.  ``upsert`` performs that conversion;
-    ``query`` converts Chroma's nested batch response in the opposite direction.
+    Chroma 要求四个同序列表，每个列表相同下标共同构成一条记录。``upsert`` 完成正向
+    转换，``query`` 负责反向还原，并对不可信的数据库响应再次校验。
     """
 
     provider_name: ClassVar[str] = "chroma"
     default_persist_directory: ClassVar[str] = "./data/db/chroma"
     default_collection_name: ClassVar[str] = "knowledge_hub"
+    _metadata_json_field: ClassVar[str] = "__rag_metadata_json"
 
     def __init__(self, config: Mapping[str, object]) -> None:
-        """Open the configured local database and select one collection.
-
-        ``PersistentClient`` stores its files under ``persist_directory``.
-        Creating another ``ChromaStore`` with the same directory and collection
-        therefore opens the same data instead of creating an in-memory database.
-        """
+        """打开配置指定的持久化数据库和 Collection。"""
         if not isinstance(config, Mapping):
             self._raise_configuration("configuration must be a mapping")
 
-        # Keep a private copy so later mutations to Settings cannot silently
-        # change the meaning of an already-created store.
+        # 保存配置副本，避免外部后续修改 Settings 时悄悄改变已创建 Store 的含义。
         self.config = dict(config)
         persist_directory = self._read_non_empty_string(
             config,
@@ -86,9 +74,8 @@ class ChromaStore(BaseVectorStore):
             path=str(self.persist_directory)
         )
 
-        # The application supplies embeddings itself, so embedding_function=None
-        # prevents Chroma from downloading or running a second embedding model.
-        # Cosine distance matches the semantic-vector retrieval design in DEV_SPEC.
+        # 向量由应用自己生成；禁用 Chroma 内置模型可避免重复下载和重复编码。
+        # Collection 使用余弦距离，与项目语义检索的分数定义保持一致。
         self._collection = self._client.get_or_create_collection(
             name=self.collection_name,
             metadata={"hnsw:space": "cosine"},
@@ -100,12 +87,7 @@ class ChromaStore(BaseVectorStore):
         records: Sequence[VectorRecord],
         trace: TraceContext | None = None,
     ) -> None:
-        """Insert new records or replace records that have the same ID.
-
-        Chroma receives one batch call rather than one call per record.  This is
-        both faster and safer: the four lists below are built together, so their
-        positions cannot drift apart.
-        """
+        """插入新记录或按相同 ID 覆盖旧记录；整个输入只发起一次批调用。"""
         del trace
         if isinstance(records, (str, bytes)) or not isinstance(records, Sequence):
             self._raise_validation("records must be a sequence of mappings")
@@ -115,8 +97,7 @@ class ChromaStore(BaseVectorStore):
         ids: list[str] = []
         embeddings: list[list[float]] = []
         documents: list[str] = []
-        # Chroma uses None to represent an empty metadata dictionary.  Passing
-        # an actual {} raises an error in ChromaDB 1.x.
+        # 即使原 metadata 为空，也会写入完整 JSON 保留字段，因此这里通常不会产生 {}。
         metadatas: list[dict[str, Any] | None] = []
         seen_ids: set[str] = set()
         vector_size: int | None = None
@@ -174,7 +155,7 @@ class ChromaStore(BaseVectorStore):
             ids.append(chunk_id)
             embeddings.append(vector)
             documents.append(text)
-            metadatas.append(dict(metadata) or None)
+            metadatas.append(self._encode_metadata(metadata))
 
         self._collection.upsert(
             ids=ids,
@@ -190,12 +171,10 @@ class ChromaStore(BaseVectorStore):
         filters: Mapping[str, Any] | None = None,
         trace: TraceContext | None = None,
     ) -> list[VectorSearchResult]:
-        """Return the ``top_k`` records nearest to one query vector.
+        """返回与查询向量最接近的 ``top_k`` 条记录。
 
-        Chroma returns *distance*, where a smaller number is better.  The rest
-        of this project uses *score*, where a larger number is better.  Because
-        this collection uses cosine distance, ``score = 1 - distance`` converts
-        the value back to cosine similarity.
+        Chroma 返回越小越好的 distance，项目返回越大越好的 score。余弦距离下使用
+        ``score = 1 - distance`` 即可转换回余弦相似度。
         """
         del trace
         if isinstance(top_k, bool) or not isinstance(top_k, int) or top_k < 1:
@@ -212,8 +191,71 @@ class ChromaStore(BaseVectorStore):
         return self._convert_query_response(response)
 
     @classmethod
+    def _encode_metadata(
+        cls,
+        metadata: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """把任意 JSON metadata 转成 Chroma 可接受的标量字典。
+
+        输入是项目完整 metadata；输出保留所有顶层标量用于过滤，并额外保存一份确定性
+        JSON。列表、字典和 ``None`` 不直接交给 Chroma，查询时从 JSON 无损恢复。
+        """
+        complete = dict(metadata)
+        try:
+            serialized = json.dumps(
+                complete,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+        except (TypeError, ValueError) as exc:
+            cls._raise_validation(
+                f"metadata must contain finite JSON-compatible values: {exc}"
+            )
+
+        encoded: dict[str, Any] = {cls._metadata_json_field: serialized}
+        for key, value in complete.items():
+            if not isinstance(key, str) or not key.strip():
+                continue
+            if key == cls._metadata_json_field:
+                continue
+            if isinstance(value, bool) or isinstance(value, (str, int)):
+                encoded[key] = value
+            elif isinstance(value, float) and math.isfinite(value):
+                encoded[key] = value
+        return encoded
+
+    @classmethod
+    def _decode_metadata(
+        cls,
+        metadata: Mapping[str, Any] | None,
+    ) -> dict[str, Any]:
+        """优先从保留 JSON 字段恢复完整 metadata，并兼容旧版标量记录。"""
+        if metadata is None:
+            return {}
+        raw = metadata.get(cls._metadata_json_field)
+        if raw is None:
+            return dict(metadata)
+        if not isinstance(raw, str):
+            raise RuntimeError(
+                "chroma response error: encoded metadata must be a string"
+            )
+        try:
+            decoded = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                "chroma response error: encoded metadata is invalid JSON"
+            ) from exc
+        if not isinstance(decoded, Mapping):
+            raise RuntimeError(
+                "chroma response error: encoded metadata must be an object"
+            )
+        return dict(decoded)
+
+    @classmethod
     def _read_vector(cls, value: object, *, field: str) -> list[float]:
-        """Validate one vector and convert every number to a plain float."""
+        """校验一个向量，并把所有实数规范成普通 float。"""
         if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
             cls._raise_validation(f"{field} must be a sequence of numbers")
         if not value:
@@ -238,12 +280,7 @@ class ChromaStore(BaseVectorStore):
         cls,
         filters: Mapping[str, Any] | None,
     ) -> dict[str, Any] | None:
-        """Translate simple project equality filters into Chroma syntax.
-
-        Chroma accepts ``{"collection": "docs"}`` for one condition, but
-        multiple conditions must be wrapped in ``$and``.  Callers should not
-        need to know that provider-specific detail.
-        """
+        """把项目的简单等值过滤条件转换成 Chroma 的 ``$and`` 语法。"""
         if filters is None:
             return None
         if not isinstance(filters, Mapping):
@@ -257,6 +294,8 @@ class ChromaStore(BaseVectorStore):
                 cls._raise_validation(
                     "filter keys must be non-empty strings"
                 )
+            if key == cls._metadata_json_field:
+                cls._raise_validation("filters cannot access reserved metadata fields")
             if isinstance(value, float) and not math.isfinite(value):
                 cls._raise_validation(
                     f"filter '{key}' must contain a finite value"
@@ -276,7 +315,7 @@ class ChromaStore(BaseVectorStore):
         cls,
         response: Mapping[str, Any],
     ) -> list[VectorSearchResult]:
-        """Flatten Chroma's one-query batch response into project results."""
+        """把 Chroma 单查询的嵌套批响应展开为项目结果。"""
         ids = cls._first_batch(response, "ids")
         documents = cls._first_batch(response, "documents")
         metadatas = cls._first_batch(response, "metadatas")
@@ -308,20 +347,24 @@ class ChromaStore(BaseVectorStore):
                 raise RuntimeError(
                     "chroma response error: distance must be numeric"
                 )
+            if not math.isfinite(float(distance)):
+                raise RuntimeError(
+                    "chroma response error: distance must be finite"
+                )
 
             results.append(
                 {
                     "chunk_id": chunk_id,
                     "score": 1.0 - float(distance),
                     "text": document,
-                    "metadata": dict(metadata) if metadata is not None else {},
+                    "metadata": cls._decode_metadata(metadata),
                 }
             )
         return results
 
     @staticmethod
     def _first_batch(response: Mapping[str, Any], field: str) -> list[Any]:
-        """Read the first nested result list produced by one query vector."""
+        """读取单个查询向量对应的第一层结果列表。"""
         batches = response.get(field)
         if not isinstance(batches, list) or not batches:
             raise RuntimeError(
@@ -347,9 +390,9 @@ class ChromaStore(BaseVectorStore):
         return value.strip()
 
     @classmethod
-    def _raise_configuration(cls, detail: str) -> None:
+    def _raise_configuration(cls, detail: str) -> NoReturn:
         raise ValueError(f"{cls.provider_name} configuration error: {detail}")
 
     @classmethod
-    def _raise_validation(cls, detail: str) -> None:
+    def _raise_validation(cls, detail: str) -> NoReturn:
         raise ValueError(f"{cls.provider_name} validation error: {detail}")

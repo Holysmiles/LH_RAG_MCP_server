@@ -1,11 +1,10 @@
-"""Create the sparse statistics consumed by the BM25 indexer.
+"""生成 BM25 索引器需要的稀疏统计数据。
 
-``Chunk[] -> tokenize -> term frequencies -> BM25 batch statistics``
+整体链路：``Chunk[] -> 分词 -> 词频 -> BM25 批次统计``。
 
-This stage does not calculate IDF and does not write files.  It only turns
-each chunk into a deterministic ``term -> tf`` mapping and reports the corpus
-statistics that C11 needs.  Keeping tokenization here makes the indexer and
-the future sparse retriever use exactly the same representation.
+本阶段不计算 IDF，也不写文件；它只把每个 Chunk 转成确定性的 ``term -> tf``，并
+汇总 C11 所需的文档频率和平均长度。索引和查询共用这里的分词规则，才能保证写入时
+的词与检索时的词处于同一个表示空间。
 """
 
 from __future__ import annotations
@@ -21,18 +20,14 @@ from core import Chunk
 
 @dataclass(frozen=True, slots=True)
 class SparseChunkEncoding:
-    """One chunk's sparse representation.
-
-    ``term_weights`` contains raw term frequency (TF), not IDF.  C11 adds the
-    corpus-level IDF after it has seen all records.
-    """
+    """单个 Chunk 的稀疏表示；``term_weights`` 是原始词频，不是 IDF。"""
 
     chunk_id: str
     term_weights: dict[str, float]
     doc_length: int
 
     def to_dict(self) -> dict[str, Any]:
-        """Return the JSON-compatible shape expected by the storage layer."""
+        """返回存储层可直接序列化为 JSON 的字典。"""
         return {
             "chunk_id": self.chunk_id,
             "term_weights": dict(self.term_weights),
@@ -42,10 +37,9 @@ class SparseChunkEncoding:
 
 @dataclass(frozen=True, slots=True)
 class SparseEncodingBatch:
-    """Corpus-level sparse statistics plus per-chunk records.
+    """一批 Chunk 的记录及语料级统计。
 
-    ``document_frequency`` counts a term once per document, even when its TF
-    is greater than one.  ``avg_doc_length`` is zero for an empty batch.
+    ``document_frequency`` 在每篇文档中最多计数一次；空批次的平均长度为 0。
     """
 
     records: tuple[SparseChunkEncoding, ...]
@@ -72,18 +66,12 @@ class SparseEncodingBatch:
 
 
 class SparseEncoder:
-    """Build deterministic BM25-ready term statistics from ``Chunk`` objects.
+    """从 Chunk 生成确定性的 BM25 词项统计。
 
-    Inputs:
-        A non-string sequence of ``Chunk`` objects.  ``stopwords`` is optional
-        and can be injected by callers that need domain-specific filtering.
-    Outputs:
-        ``SparseEncodingBatch`` with one ordered record per input chunk and
-        corpus document frequency statistics for the next indexing stage.
-    Failure boundaries:
-        Invalid public input raises immediately.  Empty or whitespace-only
-        text is valid and produces an empty term map with length zero; this is
-        important because a sparse route must not invent a keyword for it.
+    输入：非字符串的 Chunk 序列，以及可选的领域停用词集合。
+    输出：``SparseEncodingBatch``，其中每个输入 Chunk 有一条同序记录，并包含语料级
+    文档频率。失败边界：非法公开参数立即报错；空文本合法，产生长度为 0 的空词表，
+    因为稀疏检索不能凭空为原文制造关键词。
     """
 
     _token_pattern: ClassVar[re.Pattern[str]] = re.compile(
@@ -94,6 +82,8 @@ class SparseEncoder:
         if stopwords is None:
             self.stopwords: frozenset[str] = frozenset()
         else:
+            if isinstance(stopwords, (str, bytes)):
+                raise TypeError("stopwords must be a non-string iterable")
             normalized: set[str] = set()
             for word in stopwords:
                 if not isinstance(word, str):
@@ -103,7 +93,7 @@ class SparseEncoder:
             self.stopwords = frozenset(normalized)
 
     def encode(self, chunks: Sequence[Chunk]) -> SparseEncodingBatch:
-        """Tokenize a batch and calculate TF, DF, and average document length."""
+        """对一个批次分词，并计算 TF、DF 与平均文档长度。"""
         if isinstance(chunks, (str, bytes)) or not isinstance(chunks, Sequence):
             raise TypeError("chunks must be a non-string sequence")
 

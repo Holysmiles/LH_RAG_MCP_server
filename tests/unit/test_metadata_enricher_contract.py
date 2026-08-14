@@ -169,3 +169,43 @@ def test_invalid_configuration_is_rejected() -> None:
         MetadataEnricher(
             Settings(ingestion={"metadata_enricher": {"use_llm": "yes"}})
         )
+
+
+@pytest.mark.unit
+def test_rule_failure_is_isolated_and_returns_minimum_safe_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    enricher = MetadataEnricher(settings())
+
+    def fail_rule(*args: object, **kwargs: object) -> dict[str, Any]:
+        raise RuntimeError("broken rule")
+
+    monkeypatch.setattr(enricher, "_rule_metadata", fail_rule)
+
+    output = enricher.transform([make_chunk(), make_chunk("second chunk")])
+
+    assert len(output) == 2
+    assert all(item.metadata["title"] for item in output)
+    assert all(item.metadata["summary"] for item in output)
+    assert all(item.metadata["tags"] for item in output)
+    assert all(item.metadata["enriched_by"] == "original" for item in output)
+
+
+@pytest.mark.unit
+def test_existing_and_llm_text_fields_are_bounded() -> None:
+    chunk = make_chunk()
+    chunk.metadata.update({"title": "t" * 500, "summary": "s" * 800})
+    rule_output = MetadataEnricher(settings()).transform([chunk])[0]
+
+    llm = FakeLLM(
+        '{"title":"' + "t" * 500 + '","summary":"' + "s" * 800 + '","tags":["' + "x" * 100 + '"]}'
+    )
+    llm_output = MetadataEnricher(settings(use_llm=True), llm=llm).transform(
+        [make_chunk()]
+    )[0]
+
+    assert len(rule_output.metadata["title"]) <= 120
+    assert len(rule_output.metadata["summary"]) <= 300
+    assert len(llm_output.metadata["title"]) <= 120
+    assert len(llm_output.metadata["summary"]) <= 300
+    assert len(llm_output.metadata["tags"][0]) <= 64
