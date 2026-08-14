@@ -211,6 +211,40 @@ def test_nested_metadata_roundtrips_without_losing_filterable_scalars(
 
 
 @pytest.mark.integration
+def test_get_by_ids_preserves_requested_order_and_omits_missing(
+    tmp_path: Path,
+    sample_records: list[dict[str, Any]],
+) -> None:
+    store = ChromaStore(make_config(tmp_path / "get-by-ids-db"))
+    store.upsert(sample_records)
+
+    records = store.get_by_ids(
+        ["chunk-gamma", "missing", "chunk-alpha"]
+    )
+
+    assert [record["id"] for record in records] == [
+        "chunk-gamma",
+        "chunk-alpha",
+    ]
+    assert records[0]["text"] == "Gamma points in another direction."
+    assert records[0]["metadata"] == {
+        "collection": "notes",
+        "language": "en",
+    }
+
+
+@pytest.mark.integration
+def test_get_by_ids_validates_ids_and_empty_input_is_valid(tmp_path: Path) -> None:
+    store = ChromaStore(make_config(tmp_path / "get-validation-db"))
+
+    assert store.get_by_ids([]) == []
+    with pytest.raises(ValueError, match="duplicate"):
+        store.get_by_ids(["same", "same"])
+    with pytest.raises(ValueError, match=r"ids\[0\]"):
+        store.get_by_ids([""])
+
+
+@pytest.mark.integration
 @pytest.mark.parametrize(
     ("records", "message"),
     [

@@ -1993,16 +1993,16 @@ dashboard:
 | C11 | BM25Indexer（倒排索引+IDF计算） | [x] | 2026-08-14 | JSON 持久化 BM25 倒排索引、IDF/postings、查询排序、upsert 替换与按 source 删除；round-trip 测试通过 |
 | C12 | VectorUpserter（幂等upsert） | [x] | 2026-08-14 | 稳定 chunk ID、ChunkRecord 转存储字典、批量幂等 upsert 与向量对齐校验；契约测试通过 |
 | C13 | ImageStorage（图片存储+SQLite索引） | [x] | 2026-08-14 | 托管图片复制、SQLite image_index、WAL、按 collection/doc_hash 查询、幂等更新与文档删除；契约测试通过 |
-| C14 | Pipeline 编排（MVP 串起来） | [ ] | | |
-| C15 | 脚本入口 ingest.py | [ ] | | |
+| C14 | Pipeline 编排（MVP 串起来） | [x] | 2026-08-14 | 完整串联 integrity/load/split/transform/encode/store；统一 Dense/BM25 稳定 ID，失败状态可重试；真实 PDF、Chroma、BM25、图片与 SQLite 集成测试通过 |
+| C15 | 脚本入口 ingest.py | [x] | 2026-08-14 | 支持单 PDF/目录、collection、force 与自定义 settings；真实子进程验证 Chroma/BM25/SQLite 产物、增量跳过和强制重跑 |
 
 #### 阶段 D：Retrieval MVP
 
 | 任务编号 | 任务名称 | 状态 | 完成日期 | 备注 |
 |---------|---------|------|---------|------|
-| D1 | QueryProcessor（关键词提取 + filters） | [ ] | | |
-| D2 | DenseRetriever（调用 VectorStore.query） | [ ] | | |
-| D3 | SparseRetriever（BM25 查询） | [ ] | | |
+| D1 | QueryProcessor（关键词提取 + filters） | [x] | 2026-08-14 | 新增 ProcessedQuery 稳定契约；中英文/数字关键词提取、停用词回退、显式 filters 深拷贝与 JSON 安全校验通过 |
+| D2 | DenseRetriever（调用 VectorStore.query） | [x] | 2026-08-14 | Query 单向量编码、配置/显式 top_k、filters/trace 透传、Provider 响应校验及 RetrievalResult 规范化通过；Chroma text round-trip 已验证 |
+| D3 | SparseRetriever（BM25 查询） | [x] | 2026-08-14 | BM25 命中后批量回填 VectorStore 正文/metadata，保留 BM25 排名，缺失 ID 安全降级；Chroma get_by_ids 契约与往返测试通过 |
 | D4 | RRF Fusion | [ ] | | |
 | D5 | HybridSearch 编排 | [ ] | | |
 | D6 | Reranker（Core 层编排 + Fallback） | [ ] | | |
@@ -2068,14 +2068,14 @@ dashboard:
 |------|---------|--------|------|
 | 阶段 A | 3 | 3 | 100% |
 | 阶段 B | 16 | 16 | 100% |
-| 阶段 C | 15 | 5 | 33.3% |
-| 阶段 D | 7 | 0 | 0% |
+| 阶段 C | 15 | 15 | 100% |
+| 阶段 D | 7 | 3 | 42.9% |
 | 阶段 E | 6 | 0 | 0% |
 | 阶段 F | 5 | 0 | 0% |
 | 阶段 G | 6 | 0 | 0% |
 | 阶段 H | 5 | 0 | 0% |
 | 阶段 I | 5 | 0 | 0% |
-| **总计** | **68** | **24** | **35.3%** |
+| **总计** | **68** | **37** | **54.4%** |
 
 
 ---

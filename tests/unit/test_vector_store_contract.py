@@ -10,6 +10,7 @@ import pytest
 from core.settings import Settings
 from libs.vector_store.base_vector_store import (
     BaseVectorStore,
+    StoredVectorRecord,
     VectorRecord,
     VectorSearchResult,
 )
@@ -63,6 +64,22 @@ class InMemoryVectorStore(BaseVectorStore):
                 "metadata": dict(record["metadata"]),
             }
             for record in ranked[:top_k]
+        ]
+
+    def get_by_ids(
+        self,
+        ids: Sequence[str],
+        trace: object | None = None,
+    ) -> list[StoredVectorRecord]:
+        del trace
+        return [
+            {
+                "id": chunk_id,
+                "text": str(self.records[chunk_id]["text"]),
+                "metadata": dict(self.records[chunk_id]["metadata"]),
+            }
+            for chunk_id in ids
+            if chunk_id in self.records
         ]
 
     @staticmethod
@@ -170,6 +187,19 @@ def test_query_rejects_non_positive_top_k() -> None:
 
     with pytest.raises(ValueError, match="top_k"):
         store.query([1.0, 0.0], top_k=0)
+
+
+@pytest.mark.unit
+def test_get_by_ids_preserves_request_order_and_omits_missing(
+    sample_records: list[dict[str, Any]],
+) -> None:
+    store = InMemoryVectorStore({})
+    store.upsert(sample_records)
+
+    records = store.get_by_ids(["chunk-2", "missing", "chunk-1"])
+
+    assert [record["id"] for record in records] == ["chunk-2", "chunk-1"]
+    assert records[0]["text"] == "beta document"
 
 
 @pytest.mark.unit

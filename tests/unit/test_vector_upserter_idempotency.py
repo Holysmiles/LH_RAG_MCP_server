@@ -9,7 +9,12 @@ import pytest
 from core import Chunk
 from core.settings import Settings
 from ingestion.storage import VectorUpserter
-from libs.vector_store.base_vector_store import BaseVectorStore, VectorRecord, VectorSearchResult
+from libs.vector_store.base_vector_store import (
+    BaseVectorStore,
+    StoredVectorRecord,
+    VectorRecord,
+    VectorSearchResult,
+)
 
 
 class FakeVectorStore(BaseVectorStore):
@@ -26,6 +31,14 @@ class FakeVectorStore(BaseVectorStore):
         filters: Mapping[str, object] | None = None,
         trace: object | None = None,
     ) -> list[VectorSearchResult]:
+        return []
+
+    def get_by_ids(
+        self,
+        ids: Sequence[str],
+        trace: object | None = None,
+    ) -> list[StoredVectorRecord]:
+        del ids, trace
         return []
 
 

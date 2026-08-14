@@ -18,6 +18,14 @@ if TYPE_CHECKING:
 VectorRecord = Mapping[str, Any]
 
 
+class StoredVectorRecord(TypedDict):
+    """按 ID 读取时返回的正文与元数据，不暴露后端 SDK 对象。"""
+
+    id: str
+    text: str
+    metadata: dict[str, Any]
+
+
 class VectorSearchResult(TypedDict):
     """Stable result shape returned by vector store queries."""
 
@@ -65,5 +73,17 @@ class BaseVectorStore(ABC):
 
         Returns:
             Ranked results containing chunk identity, score, text, and metadata.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_by_ids(
+        self,
+        ids: Sequence[str],
+        trace: TraceContext | None = None,
+    ) -> list[StoredVectorRecord]:
+        """批量读取记录，并按请求 ID 顺序返回存在的项目。
+
+        未找到的 ID 被省略；实现必须拒绝重复或非法 ID，且不能返回请求之外的记录。
         """
         raise NotImplementedError

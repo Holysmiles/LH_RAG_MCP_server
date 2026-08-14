@@ -19,6 +19,7 @@ import chromadb
 
 from libs.vector_store.base_vector_store import (
     BaseVectorStore,
+    StoredVectorRecord,
     VectorRecord,
     VectorSearchResult,
 )
@@ -189,6 +190,22 @@ class ChromaStore(BaseVectorStore):
             include=["documents", "metadatas", "distances"],
         )
         return self._convert_query_response(response)
+
+    def get_by_ids(
+        self,
+        ids: Sequence[str],
+        trace: TraceContext | None = None,
+    ) -> list[StoredVectorRecord]:
+        """批量补全 Sparse 命中的正文和 metadata，并恢复调用方请求顺序。"""
+        del trace
+        normalized_ids = self._validate_record_ids(ids)
+        if not normalized_ids:
+            return []
+        response = self._collection.get(
+            ids=normalized_ids,
+            include=["documents", "metadatas"],
+        )
+        return self._convert_get_response(response, normalized_ids)
 
     @classmethod
     def _encode_metadata(
@@ -361,6 +378,63 @@ class ChromaStore(BaseVectorStore):
                 }
             )
         return results
+
+    @classmethod
+    def _convert_get_response(
+        cls,
+        response: Mapping[str, Any],
+        requested_ids: Sequence[str],
+    ) -> list[StoredVectorRecord]:
+        """校验 Chroma 的扁平 get 响应，并按 requested_ids 重排。"""
+        if not isinstance(response, Mapping):
+            raise RuntimeError("chroma response error: get response must be a mapping")
+        ids = response.get("ids")
+        documents = response.get("documents")
+        metadatas = response.get("metadatas")
+        if not all(isinstance(items, list) for items in (ids, documents, metadatas)):
+            raise RuntimeError("chroma response error: invalid get response fields")
+        if not (len(ids) == len(documents) == len(metadatas)):
+            raise RuntimeError(
+                "chroma response error: get fields have different lengths"
+            )
+
+        requested = set(requested_ids)
+        by_id: dict[str, StoredVectorRecord] = {}
+        for index, chunk_id in enumerate(ids):
+            document = documents[index]
+            metadata = metadatas[index]
+            if not isinstance(chunk_id, str) or not isinstance(document, str):
+                raise RuntimeError("chroma response error: invalid get id or document")
+            if chunk_id not in requested:
+                raise RuntimeError("chroma response error: get returned an unknown id")
+            if chunk_id in by_id:
+                raise RuntimeError("chroma response error: get returned a duplicate id")
+            if metadata is not None and not isinstance(metadata, Mapping):
+                raise RuntimeError(
+                    "chroma response error: get metadata must be a mapping or None"
+                )
+            by_id[chunk_id] = {
+                "id": chunk_id,
+                "text": document,
+                "metadata": cls._decode_metadata(metadata),
+            }
+        return [by_id[chunk_id] for chunk_id in requested_ids if chunk_id in by_id]
+
+    @classmethod
+    def _validate_record_ids(cls, ids: object) -> list[str]:
+        if isinstance(ids, (str, bytes)) or not isinstance(ids, Sequence):
+            cls._raise_validation("ids must be a non-string sequence")
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for index, chunk_id in enumerate(ids):
+            if not isinstance(chunk_id, str) or not chunk_id.strip():
+                cls._raise_validation(f"ids[{index}] must be a non-empty string")
+            value = chunk_id.strip()
+            if value in seen:
+                cls._raise_validation(f"ids contains duplicate id '{value}'")
+            seen.add(value)
+            normalized.append(value)
+        return normalized
 
     @staticmethod
     def _first_batch(response: Mapping[str, Any], field: str) -> list[Any]:

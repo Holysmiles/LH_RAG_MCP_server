@@ -6,12 +6,14 @@
 
 - ``Document`` 是 Loader 的输出：一整个文件的规范化文本和来源信息；
 - ``Chunk`` 是 DocumentChunker 的输出：文档中的一小段文本和定位信息；
-- ``ChunkRecord`` 是 Encoder 的输出：Chunk 加上可选稠密/稀疏向量，可入库。
+- ``ChunkRecord`` 是 Encoder 的输出：Chunk 加上可选稠密/稀疏向量，可入库；
+- ``ProcessedQuery`` 是 QueryProcessor 的输出：原查询、关键词和过滤条件。
+- ``RetrievalResult`` 是检索器的输出：统一身份、分数、正文和元数据。
 
-所有类型的共同输入都是 ``id``、``text`` 和 ``metadata``。``metadata`` 至少
-包含非空 ``source_path``，其余业务字段可以继续增加。共同输出是稳定的 Python
-字典或 JSON 文本，因此 Loader、Transformer、Storage 和 MCP 层不需要各自猜测
-字段名称，也不需要依赖某个数据库 SDK 的对象类型。
+三个摄取类型的共同输入都是 ``id``、``text`` 和 ``metadata``，其中 metadata
+至少包含非空 ``source_path``；ProcessedQuery 则固定为 query/keywords/filters。
+所有契约都输出稳定的 Python 字典或 JSON 文本，因此各层不需要猜测字段名称，也
+不需要依赖某个数据库 SDK 的对象类型。
 """
 
 from __future__ import annotations
@@ -46,10 +48,10 @@ class ImageRef(TypedDict, total=False):
 
 
 class _SerializableContract:
-    """为三个 dataclass 提供相同的 dict/JSON 输出方式。"""
+    """为跨模块 dataclass 提供相同的 dict/JSON 输出方式。"""
 
     def to_dict(self) -> dict[str, Any]:
-        """返回可安全修改的深拷贝字典，不暴露对象内部 metadata。"""
+        """返回可安全修改的深拷贝字典，不暴露对象内部可变字段。"""
         return asdict(self)  # type: ignore[arg-type]
 
     def to_json(self) -> str:
@@ -151,6 +153,58 @@ class ChunkRecord(_SerializableContract):
         self.sparse_vector = _validate_sparse_vector(self.sparse_vector)
 
 
+@dataclass(slots=True)
+class ProcessedQuery(_SerializableContract):
+    """QueryProcessor 与 Dense/Sparse Retriever 之间的稳定数据契约。
+
+    ``query`` 保留给 Dense Embedding，``keywords`` 交给 BM25，``filters`` 作为
+    两路检索共享的结构化约束。三者分开存储，避免关键词清洗意外改变语义查询。
+    """
+
+    query: str
+    keywords: list[str]
+    filters: dict[str, Any]
+
+    def __post_init__(self) -> None:
+        self.query = _validate_non_empty_text("ProcessedQuery.query", self.query)
+        self.keywords = _validate_keywords(self.keywords)
+        self.filters = _copy_and_validate_filters(self.filters)
+
+    @property
+    def original_query(self) -> str:
+        """显式别名，强调 Dense 路径使用未做关键词拼接的查询。"""
+        return self.query
+
+    @property
+    def semantic_query(self) -> str:
+        """供后续 DenseRetriever 使用的语义查询别名。"""
+        return self.query
+
+
+@dataclass(slots=True)
+class RetrievalResult(_SerializableContract):
+    """Dense/Sparse/Fusion/Rerank 共同使用的召回结果。
+
+    Provider 或数据库对象只能停留在适配器内部；Core 层统一使用这个可序列化类型，
+    后续融合算法才能在不依赖 Chroma/BM25 SDK 的情况下处理同一种数据。
+    """
+
+    chunk_id: str
+    score: float
+    text: str
+    metadata: dict[str, Any]
+
+    def __post_init__(self) -> None:
+        self.chunk_id = _validate_non_empty_text(
+            "RetrievalResult.chunk_id",
+            self.chunk_id,
+        )
+        self.score = _validate_finite_number("RetrievalResult.score", self.score)
+        if not isinstance(self.text, str):
+            raise TypeError("RetrievalResult.text must be a string")
+        self.metadata = _copy_and_validate_result_metadata(self.metadata)
+
+
 def _validate_identity_and_text(owner: str, record_id: object, text: object) -> None:
     _validate_non_empty_text(f"{owner}.id", record_id)
     if not isinstance(text, str):
@@ -185,6 +239,52 @@ def _copy_and_validate_metadata(owner: str, metadata: object) -> Metadata:
             f"{owner}.metadata must contain only JSON-serializable values"
         ) from None
     return copied_metadata
+
+
+def _validate_keywords(keywords: object) -> list[str]:
+    if isinstance(keywords, (str, bytes)) or not isinstance(keywords, Sequence):
+        raise TypeError("ProcessedQuery.keywords must be a sequence")
+    normalized: list[str] = []
+    for index, keyword in enumerate(keywords):
+        normalized.append(
+            _validate_non_empty_text(
+                f"ProcessedQuery.keywords[{index}]",
+                keyword,
+            )
+        )
+    if not normalized:
+        raise ValueError("ProcessedQuery.keywords must not be empty")
+    return normalized
+
+
+def _copy_and_validate_filters(filters: object) -> dict[str, Any]:
+    if not isinstance(filters, Mapping):
+        raise TypeError("ProcessedQuery.filters must be a mapping")
+    if any(not isinstance(key, str) or not key.strip() for key in filters):
+        raise ValueError("ProcessedQuery.filters keys must be non-empty strings")
+    copied = deepcopy(dict(filters))
+    try:
+        json.dumps(copied, ensure_ascii=False, allow_nan=False)
+    except (TypeError, ValueError):
+        raise ValueError(
+            "ProcessedQuery.filters must contain finite JSON-serializable values"
+        ) from None
+    return copied
+
+
+def _copy_and_validate_result_metadata(metadata: object) -> dict[str, Any]:
+    if not isinstance(metadata, Mapping):
+        raise TypeError("RetrievalResult.metadata must be a mapping")
+    if any(not isinstance(key, str) for key in metadata):
+        raise TypeError("RetrievalResult.metadata keys must be strings")
+    copied = deepcopy(dict(metadata))
+    try:
+        json.dumps(copied, ensure_ascii=False, allow_nan=False)
+    except (TypeError, ValueError):
+        raise ValueError(
+            "RetrievalResult.metadata must contain finite JSON-serializable values"
+        ) from None
+    return copied
 
 
 def _validate_image_refs(owner: str, images: object) -> None:
@@ -268,5 +368,7 @@ __all__ = [
     "Document",
     "ImageRef",
     "Metadata",
+    "ProcessedQuery",
+    "RetrievalResult",
     "SparseVector",
 ]
