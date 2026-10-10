@@ -2005,7 +2005,7 @@ dashboard:
 | D3 | SparseRetriever（BM25 查询） | [x] | 2026-08-14 | BM25 命中后批量回填 VectorStore 正文/metadata，保留 BM25 排名，缺失 ID 安全降级；Chroma get_by_ids 契约与往返测试通过 |
 | D4 | RRF Fusion | [ ] | | |
 | D5 | HybridSearch 编排 | [ ] | | |
-| D6 | Reranker（Core 层编排 + Fallback） | [ ] | | |
+| D6 | Reranker（Core 层编排 + Fallback） | [x] | 2026-10-09 | 配置驱动 Core 重排序、异常/超时及非法输出回退、Trace fallback 标记与迟到写入隔离；136 项相关测试通过 |
 | D7 | 脚本入口 query.py（查询可用） | [ ] | | |
 
 #### 阶段 E：MCP Server 层与 Tools

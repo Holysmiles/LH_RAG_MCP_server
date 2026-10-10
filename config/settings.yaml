@@ -43,6 +43,7 @@ retrieval:
 rerank:
   enabled: false
   provider: none
+  timeout_seconds: 10
 
 evaluation:
   enabled: false
