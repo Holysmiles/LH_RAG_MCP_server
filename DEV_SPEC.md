@@ -2003,10 +2003,10 @@ dashboard:
 | D1 | QueryProcessor（关键词提取 + filters） | [x] | 2026-08-14 | 新增 ProcessedQuery 稳定契约；中英文/数字关键词提取、停用词回退、显式 filters 深拷贝与 JSON 安全校验通过 |
 | D2 | DenseRetriever（调用 VectorStore.query） | [x] | 2026-08-14 | Query 单向量编码、配置/显式 top_k、filters/trace 透传、Provider 响应校验及 RetrievalResult 规范化通过；Chroma text round-trip 已验证 |
 | D3 | SparseRetriever（BM25 查询） | [x] | 2026-08-14 | BM25 命中后批量回填 VectorStore 正文/metadata，保留 BM25 排名，缺失 ID 安全降级；Chroma get_by_ids 契约与往返测试通过 |
-| D4 | RRF Fusion | [ ] | | |
-| D5 | HybridSearch 编排 | [ ] | | |
+| D4 | RRF Fusion | [x] | 2026-09-15 | Deterministic RRF fusion with configurable k/top_k, stable tie ordering, duplicate/conflict validation, and single-route fallback tests passed |
+| D5 | HybridSearch 编排 | [x] | 2026-09-15 | 并行 dense/sparse 检索、RRF 融合、metadata 过滤与单路失败降级已实现并通过编译验证 |
 | D6 | Reranker（Core 层编排 + Fallback） | [x] | 2026-10-09 | 配置驱动 Core 重排序、异常/超时及非法输出回退、Trace fallback 标记与迟到写入隔离；136 项相关测试通过 |
-| D7 | 脚本入口 query.py（查询可用） | [ ] | | |
+| D7 | 脚本入口 query.py（查询可用） | [x] | 2026-10-10 | 查询 CLI、集合过滤、重排前候选保留、verbose 阶段结果、跳过重排与空库提示；真实子进程验收及相关回归共 165 项通过 |
 
 #### 阶段 E：MCP Server 层与 Tools
 
@@ -2069,13 +2069,13 @@ dashboard:
 | 阶段 A | 3 | 3 | 100% |
 | 阶段 B | 16 | 16 | 100% |
 | 阶段 C | 15 | 15 | 100% |
-| 阶段 D | 7 | 3 | 42.9% |
+| 阶段 D | 7 | 7 | 100% |
 | 阶段 E | 6 | 0 | 0% |
 | 阶段 F | 5 | 0 | 0% |
 | 阶段 G | 6 | 0 | 0% |
 | 阶段 H | 5 | 0 | 0% |
 | 阶段 I | 5 | 0 | 0% |
-| **总计** | **68** | **37** | **54.4%** |
+| **总计** | **68** | **41** | **60.3%** |
 
 
 ---
