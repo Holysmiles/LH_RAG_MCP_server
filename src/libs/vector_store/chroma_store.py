@@ -207,6 +207,23 @@ class ChromaStore(BaseVectorStore):
         )
         return self._convert_get_response(response, normalized_ids)
 
+    def get_by_metadata(
+        self, filters: Mapping[str, Any], trace: TraceContext | None = None,
+    ) -> list[StoredVectorRecord]:
+        """Read matching documents without embeddings or a similarity query."""
+        del trace
+        where = self._build_where(filters)
+        if where is None:
+            self._raise_validation("metadata filters must not be empty")
+        response = self._collection.get(where=where, include=["documents", "metadatas"])
+        if not isinstance(response, Mapping) or not isinstance(response.get("ids"), list):
+            raise RuntimeError("chroma response error: invalid metadata get response")
+        records = self._convert_get_response(response, response["ids"])
+        if any(not all(record["metadata"].get(key) == value for key, value in filters.items())
+               for record in records):
+            raise RuntimeError("chroma response error: metadata filter mismatch")
+        return sorted(records, key=lambda record: record["id"])
+
     @classmethod
     def _encode_metadata(
         cls,

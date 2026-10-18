@@ -60,6 +60,25 @@ def make_config(directory: Path) -> dict[str, Any]:
 
 
 @pytest.mark.integration
+def test_metadata_lookup_filters_and_restores_full_metadata(tmp_path):
+    store = ChromaStore(make_config(tmp_path / "metadata-read"))
+    store.upsert([
+        {"id": key, "text": key, "dense_vector": [1.0, 0.0],
+         "metadata": {"document_id": doc, "collection": collection,
+                      "title": "标题", "summary": "摘要", "tags": ["RAG", "中文"]}}
+        for key, doc, collection in (("z", "doc-1", "alpha"), ("a", "doc-1", "alpha"),
+                                     ("b", "doc-1", "beta"), ("c", "doc-2", "alpha"))
+    ])
+    records = store.get_by_metadata({"document_id": "doc-1", "collection": "alpha"})
+    assert [record["id"] for record in records] == ["a", "z"]
+    assert records[0]["metadata"]["tags"] == ["RAG", "中文"]
+    assert records[0]["metadata"]["summary"] == "摘要"
+    assert store.get_by_metadata({"document_id": "absent"}) == []
+    with pytest.raises(ValueError, match="must not be empty"):
+        store.get_by_metadata({})
+
+
+@pytest.mark.integration
 def test_factory_creates_builtin_chroma_store(tmp_path: Path) -> None:
     """provider=chroma should work without manual runtime registration."""
     config = make_config(tmp_path / "factory-db")

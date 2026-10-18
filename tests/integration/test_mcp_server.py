@@ -226,7 +226,9 @@ def test_default_server_lists_tools_without_opening_database(tmp_path):
         send(process, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
         response = receive(messages)
         assert response["id"] == 2
-        assert [tool["name"] for tool in response["result"]["tools"]] == ["query_knowledge_hub", "list_collections"]
+        assert [tool["name"] for tool in response["result"]["tools"]] == [
+            "query_knowledge_hub", "list_collections", "get_document_summary",
+        ]
         assert_clean_shutdown(process, messages)
     assert not (tmp_path / "data").exists()
 
@@ -304,7 +306,9 @@ def knowledge_data(tmp_path):
                          "prompt_path": str(PROJECT_ROOT / "config/prompts/rerank.txt")}
     store = ChromaStore(config["vector_store"])
     chunks = [Chunk(key, f"Azure setup guide {key}",
-                    {"source_path": f"{key}.pdf", "collection": collection, "page": 2},
+                    {"source_path": f"{key}.pdf", "collection": collection, "page": 2,
+                     "document_id": f"doc-{key}", "chunk_index": 0,
+                     "title": f"Guide {key}", "summary": f"Summary {key}", "tags": ["Azure", "配置"]},
                     start_offset=0, end_offset=len(f"Azure setup guide {key}"))
               for key, collection in (("a", "alpha"), ("b", "alpha"), ("c", "beta"))]
     store.upsert([{"id": chunk.id, "text": chunk.text, "metadata": chunk.metadata,
@@ -387,3 +391,29 @@ def test_query_knowledge_hub_rejects_invalid_arguments_before_backend_initializa
             assert response["error"]["code"] == -32602
         assert_clean_shutdown(process, messages)
     assert not (tmp_path / "data").exists()
+
+
+def test_get_document_summary_live_stdio_uses_metadata_without_model_calls(tmp_path, knowledge_data):
+    settings_path, config, calls = knowledge_data
+    with running_server(tmp_path, arguments=("--settings", str(settings_path))) as (process, messages, errors):
+        send(process, {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                       "params": {"protocolVersion": "2024-11-05", "capabilities": {},
+                                  "clientInfo": {"name": "summary-test", "version": "1.0"}}})
+        receive(messages)
+        send(process, {"jsonrpc": "2.0", "method": "notifications/initialized"})
+        for request_id, doc_id in ((2, "doc-a"), (3, "absent")):
+            send(process, {"jsonrpc": "2.0", "id": request_id, "method": "tools/call",
+                           "params": {"name": "get_document_summary", "arguments": {"doc_id": doc_id}}})
+            response = receive(messages, timeout=60)
+            assert response["id"] == request_id
+            result = response["result"]
+            if doc_id == "doc-a":
+                assert result["isError"] is False
+                assert result["structuredContent"]["title"] == "Guide a"
+                assert result["structuredContent"]["summary"] == "Summary a"
+                assert result["structuredContent"]["tags"] == ["Azure", "配置"]
+            else:
+                assert result["isError"] is True
+                assert result["structuredContent"]["error"]["code"] == "document_not_found"
+        assert_clean_shutdown(process, messages)
+    assert not calls

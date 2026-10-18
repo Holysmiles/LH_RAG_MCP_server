@@ -38,6 +38,15 @@ class VectorSearchResult(TypedDict):
 class BaseVectorStore(ABC):
     """Define the minimal contract implemented by vector store backends."""
 
+    def get_by_metadata(
+        self, filters: Mapping[str, Any], trace: TraceContext | None = None,
+    ) -> list[StoredVectorRecord]:
+        """Read all records matching non-empty equality filters in ID order.
+
+        Optional for existing providers; unsupported backends fail explicitly.
+        """
+        raise NotImplementedError("This vector store does not support metadata reads")
+
     @abstractmethod
     def upsert(
         self,

@@ -35,11 +35,13 @@ def create_server(
 
     handler = ProtocolHandler(SERVER_NAME, server_version)
     if settings is not None:
+        from mcp_server.tools.get_document_summary import register_document_summary_tool
         from mcp_server.tools.list_collections import register_list_collections_tool
         from mcp_server.tools.query_knowledge_hub import register_query_tool
 
         register_query_tool(handler, settings)
         register_list_collections_tool(handler, settings)
+        register_document_summary_tool(handler, settings)
     return handler.server
 
 
