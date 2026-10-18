@@ -216,7 +216,7 @@ runpy.run_path({str(ENTRY_POINT)!r}, run_name="__main__")
     assert "private-provider-secret" not in stderr
 
 
-def test_default_server_lists_query_tool_without_opening_database(tmp_path):
+def test_default_server_lists_tools_without_opening_database(tmp_path):
     with running_server(tmp_path) as (process, messages, errors):
         send(process, {"jsonrpc": "2.0", "id": 1, "method": "initialize",
                        "params": {"protocolVersion": "2024-11-05", "capabilities": {},
@@ -226,9 +226,34 @@ def test_default_server_lists_query_tool_without_opening_database(tmp_path):
         send(process, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
         response = receive(messages)
         assert response["id"] == 2
-        assert [tool["name"] for tool in response["result"]["tools"]] == ["query_knowledge_hub"]
+        assert [tool["name"] for tool in response["result"]["tools"]] == ["query_knowledge_hub", "list_collections"]
         assert_clean_shutdown(process, messages)
     assert not (tmp_path / "data").exists()
+
+
+def test_list_collections_live_stdio_reads_current_directories(tmp_path):
+    with running_server(tmp_path) as (process, messages, errors):
+        send(process, {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                       "params": {"protocolVersion": "2024-11-05", "capabilities": {},
+                                  "clientInfo": {"name": "collections-test", "version": "1.0"}}})
+        receive(messages)
+        send(process, {"jsonrpc": "2.0", "method": "notifications/initialized"})
+        send(process, {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                       "params": {"name": "list_collections"}})
+        empty = receive(messages)
+        assert empty["id"] == 2
+        assert empty["result"]["structuredContent"] == {"collections": [], "total": 0}
+        assert not (tmp_path / "data").exists()
+        for name in ("beta", "alpha"):
+            (tmp_path / "data/documents" / name).mkdir(parents=True)
+        send(process, {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                       "params": {"name": "list_collections", "arguments": {}}})
+        result = receive(messages)
+        assert result["id"] == 3
+        assert result["result"]["structuredContent"] == {"collections": ["alpha", "beta"], "total": 2}
+        assert "alpha" in result["result"]["content"][0]["text"]
+        assert_clean_shutdown(process, messages)
+    assert not (tmp_path / "data/db").exists()
 
 
 @pytest.fixture

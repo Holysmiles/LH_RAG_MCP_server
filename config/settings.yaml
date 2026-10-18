@@ -59,6 +59,8 @@ dashboard:
   port: 8501
 
 ingestion:
+  # list_collections 读取此目录的直接子目录；相对路径以服务工作目录为基准。
+  documents_path: ./data/documents
   batch_size: 100
   chunk_refiner:
     # 规则清洗始终执行。启用后再调用共享 llm 配置，失败自动回退到规则结果。
