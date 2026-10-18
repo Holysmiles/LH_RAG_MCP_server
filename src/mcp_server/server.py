@@ -21,7 +21,9 @@ from mcp_server.protocol_handler import ProtocolHandler, protocol_messages
 SERVER_NAME = "modular-rag-mcp-server"
 
 
-def create_server(protocol_handler: ProtocolHandler | None = None) -> Server:
+def create_server(
+    protocol_handler: ProtocolHandler | None = None, *, settings: Settings | None = None,
+) -> Server:
     """创建 SDK Server，版本与项目的安装元数据保持一致。"""
     if protocol_handler is not None:
         return protocol_handler.server
@@ -31,7 +33,12 @@ def create_server(protocol_handler: ProtocolHandler | None = None) -> Server:
         # 源码 checkout 未安装时仍可启动；不声称一个无法确认的发布版本。
         server_version = "0.0.0+uninstalled"
 
-    return ProtocolHandler(SERVER_NAME, server_version).server
+    handler = ProtocolHandler(SERVER_NAME, server_version)
+    if settings is not None:
+        from mcp_server.tools.query_knowledge_hub import register_query_tool
+
+        register_query_tool(handler, settings)
+    return handler.server
 
 
 async def serve_stdio(settings: Settings) -> None:
@@ -41,7 +48,7 @@ async def serve_stdio(settings: Settings) -> None:
         settings.observability.get("log_level", "INFO"),
     )
     with redirect_stdout(sys.stderr):
-        server = create_server()
+        server = create_server(settings=settings)
         initialization_options = server.create_initialization_options()
 
     logger.info("MCP stdio server starting: %s", SERVER_NAME)
