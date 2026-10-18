@@ -417,3 +417,46 @@ def test_get_document_summary_live_stdio_uses_metadata_without_model_calls(tmp_p
                 assert result["structuredContent"]["error"]["code"] == "document_not_found"
         assert_clean_shutdown(process, messages)
     assert not calls
+
+
+def test_query_knowledge_hub_image_content_over_real_stdio(tmp_path, knowledge_data):
+    import base64
+    import yaml
+    from PIL import Image
+    from libs.vector_store.chroma_store import ChromaStore
+
+    settings_path, config, calls = knowledge_data
+    image_root = tmp_path / "managed-images"
+    image_root.mkdir()
+    image = image_root / "figure.png"
+    Image.new("RGB", (3, 3), "blue").save(image)
+    config["ingestion"]["image_root"] = str(image_root)
+    config["rerank"]["enabled"] = False
+    settings_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    store = ChromaStore(config["vector_store"])
+    original = store.get_by_ids(["a"])[0]
+    original["metadata"].update({
+        "image_refs": ["figure", "figure", "gone"],
+        "images": [{"id": "figure", "path": str(image)},
+                   {"id": "gone", "path": str(image_root / "gone.png")}],
+    })
+    store.upsert([{**original, "dense_vector": [1.0, 0.0]}])
+    with running_server(tmp_path, arguments=("--settings", str(settings_path))) as (process, messages, errors):
+        send(process, {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                       "params": {"protocolVersion": "2024-11-05", "capabilities": {},
+                                  "clientInfo": {"name": "image-test", "version": "1.0"}}})
+        receive(messages)
+        send(process, {"jsonrpc": "2.0", "method": "notifications/initialized"})
+        send(process, {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                       "params": {"name": "query_knowledge_hub",
+                                  "arguments": {"query": "Azure", "top_k": 1, "collection": "alpha"}}})
+        response = receive(messages, timeout=60)
+        assert response["id"] == 2
+        result = response["result"]
+        assert [block["type"] for block in result["content"]] == ["text", "image"]
+        block = result["content"][1]
+        assert block["mimeType"] == "image/png"
+        assert base64.b64decode(block["data"], validate=True) == image.read_bytes()
+        assert result["structuredContent"]["citations"][0]["chunk_id"] == "a"
+        assert "[1]" in result["content"][0]["text"]
+        assert_clean_shutdown(process, messages)

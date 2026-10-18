@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from core.response.response_builder import MCPResponse, ResponseBuilder
+from core.response.multimodal_assembler import MultimodalAssembler
 from core.settings import Settings
 
 if TYPE_CHECKING:
@@ -75,7 +76,11 @@ def query_knowledge_hub(
         filters={"collection": collection} if collection is not None else None,
     )
     results = reranker.rerank(query, candidates, top_k=selected_k)
-    return ResponseBuilder().build(results, query)
+    assembler = MultimodalAssembler(
+        image_root=settings.ingestion.get("image_root", "data/images"),
+        image_index_db_path=settings.ingestion.get("image_index_db_path", "data/db/image_index.db"),
+    )
+    return ResponseBuilder(assembler).build(results, query)
 
 
 def register_query_tool(handler: ProtocolHandler, settings: Settings) -> None:

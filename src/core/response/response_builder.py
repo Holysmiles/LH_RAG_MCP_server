@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from typing import Any, TypedDict
 
 from core.response.citation_generator import CitationGenerator
+from core.response.multimodal_assembler import MultimodalAssembler
 from core.types import RetrievalResult
 
 
@@ -14,6 +15,9 @@ class MCPResponse(TypedDict):
 
 
 class ResponseBuilder:
+    def __init__(self, multimodal_assembler: MultimodalAssembler | None = None) -> None:
+        self.multimodal_assembler = multimodal_assembler or MultimodalAssembler()
+
     def build(self, retrieval_results: Sequence[RetrievalResult], query: str) -> MCPResponse:
         results = list(retrieval_results)
         citations = CitationGenerator().generate(results)
@@ -30,7 +34,7 @@ class ResponseBuilder:
                 )
             markdown = "\n\n".join(sections)
         return MCPResponse(
-            content=[{"type": "text", "text": markdown}],
+            content=[{"type": "text", "text": markdown}, *self.multimodal_assembler.assemble(results)],
             structuredContent={"query": query, "citations": citations, "total": len(results)},
             isError=False,
         )
