@@ -128,12 +128,23 @@ def test_validate_settings_reports_empty_required_value() -> None:
 
 
 @pytest.mark.unit
-def test_main_loads_valid_settings(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_main_loads_valid_settings(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mcp_server import server
+
+    started_with = []
+    monkeypatch.setattr(server, "run_stdio_server", started_with.append)
     exit_code = application.main(write_config(tmp_path))
 
     captured = capsys.readouterr()
     assert exit_code == 0
-    assert "Modular RAG MCP Server is ready." in captured.out
+    assert captured.out == ""
+    assert "Configuration loaded" in captured.err
+    assert len(started_with) == 1
+    assert started_with[0].embedding["provider"] == "openai"
 
 
 @pytest.mark.unit
