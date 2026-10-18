@@ -1,7 +1,6 @@
 """MCP 服务生命周期；协议编解码和握手由官方 SDK 负责。
 
-这里只建立 stdio 通道，不初始化检索模型或数据库。工具注册会在后续任务接入
-``create_server``，保持服务启动与具体业务逻辑分离。
+这里只建立 stdio 通道和工具协议，不初始化检索模型或数据库。
 """
 
 from __future__ import annotations
@@ -16,20 +15,23 @@ from mcp.server.stdio import stdio_server
 
 from core.settings import Settings
 from observability.logger import get_logger
+from mcp_server.protocol_handler import ProtocolHandler, protocol_messages
 
 
 SERVER_NAME = "modular-rag-mcp-server"
 
 
-def create_server() -> Server:
+def create_server(protocol_handler: ProtocolHandler | None = None) -> Server:
     """创建 SDK Server，版本与项目的安装元数据保持一致。"""
+    if protocol_handler is not None:
+        return protocol_handler.server
     try:
         server_version = version(SERVER_NAME)
     except PackageNotFoundError:
         # 源码 checkout 未安装时仍可启动；不声称一个无法确认的发布版本。
         server_version = "0.0.0+uninstalled"
 
-    return Server(SERVER_NAME, version=server_version)
+    return ProtocolHandler(SERVER_NAME, server_version).server
 
 
 async def serve_stdio(settings: Settings) -> None:
@@ -46,12 +48,13 @@ async def serve_stdio(settings: Settings) -> None:
     try:
         async with stdio_server() as (read_stream, write_stream):
             # Transport 已保留协议输出流。业务 print 转向 stderr，不会混入 JSON-RPC。
-            with redirect_stdout(sys.stderr):
-                await server.run(
-                    read_stream,
-                    write_stream,
-                    initialization_options,
-                )
+            async with protocol_messages(read_stream, write_stream) as messages:
+                with redirect_stdout(sys.stderr):
+                    await server.run(
+                        messages,
+                        write_stream,
+                        initialization_options,
+                    )
     finally:
         logger.info("MCP stdio server stopped")
 

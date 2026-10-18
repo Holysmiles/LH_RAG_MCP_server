@@ -144,3 +144,85 @@ def test_invalid_settings_fail_on_stderr_without_protocol_output(tmp_path, confi
     assert result.stdout == ""
     assert "Failed to load settings" in result.stderr
     assert "MCP stdio server starting" not in result.stderr
+
+
+def test_live_tool_registry_and_jsonrpc_errors(tmp_path):
+    launcher = f'''
+import runpy
+from mcp_server import server
+from mcp_server.protocol_handler import ProtocolHandler
+handler = ProtocolHandler("test-tools", "1.0")
+schema = {{"type": "object", "properties": {{"query": {{"type": "string"}}}},
+          "required": ["query"], "additionalProperties": False}}
+def echo(arguments):
+    print("tool diagnostic")
+    return {{"content": [{{"type": "text", "text": arguments["query"]}}]}}
+async def fail(arguments):
+    raise RuntimeError("private-provider-secret")
+handler.register_tool("echo", "Echo a query", schema, echo)
+handler.register_tool("fail", "Fail a query", schema, fail)
+original_create = server.create_server
+server.create_server = lambda: original_create(handler)
+runpy.run_path({str(ENTRY_POINT)!r}, run_name="__main__")
+'''
+    with running_server(tmp_path, launcher=launcher) as (process, messages, errors):
+        send(process, {
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"protocolVersion": "2024-11-05", "capabilities": {},
+                       "clientInfo": {"name": "test", "version": "1.0"}},
+        })
+        initialization = receive(messages)["result"]
+        assert initialization["serverInfo"]["name"] == "test-tools"
+        assert initialization["capabilities"]["tools"] == {"listChanged": False}
+        send(process, {"jsonrpc": "2.0", "method": "notifications/initialized"})
+        send(process, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+        tools = receive(messages)["result"]["tools"]
+        assert [tool["name"] for tool in tools] == ["echo", "fail"]
+        assert tools[0]["inputSchema"]["required"] == ["query"]
+        send(process, {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                       "params": {"name": "echo", "arguments": {"query": "中文查询"}}})
+        result = receive(messages)
+        assert result["id"] == 3
+        assert result["result"]["content"] == [{"type": "text", "text": "中文查询"}]
+
+        for request_id, method, params, code in [
+            (4, "unknown/method", {}, -32601),
+            (5, "tools/call", {}, -32602),
+            (6, "tools/call", {"name": "echo", "arguments": []}, -32602),
+            (7, "tools/call", {"name": "echo", "arguments": {"query": 42}}, -32602),
+            (8, "tools/call", {"name": "absent"}, -32602),
+            (9, "tools/call", {"name": "fail", "arguments": {"query": "x"}}, -32603),
+            (10, "tools/list", {"cursor": "unsupported"}, -32602),
+        ]:
+            send(process, {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params})
+            response = receive(messages)
+            assert response["id"] == request_id
+            assert response["error"]["code"] == code
+            assert "private-provider-secret" not in json.dumps(response)
+            assert "Traceback" not in json.dumps(response)
+
+        send(process, {"jsonrpc": "1.0", "id": 11, "method": "ping"})
+        assert receive(messages) == {"jsonrpc": "2.0", "id": None,
+                                     "error": {"code": -32600, "message": "Invalid Request"}}
+        process.stdin.write("{invalid-json\n")
+        process.stdin.flush()
+        assert receive(messages) == {"jsonrpc": "2.0", "id": None,
+                                     "error": {"code": -32700, "message": "Parse error"}}
+        send(process, {"jsonrpc": "2.0", "id": 12, "method": "ping"})
+        assert receive(messages) == {"jsonrpc": "2.0", "id": 12, "result": {}}
+        assert_clean_shutdown(process, messages)
+    stderr = "".join(errors)
+    assert "tool diagnostic" in stderr
+    assert "private-provider-secret" not in stderr
+
+
+def test_default_server_lists_no_tools_before_business_tools_are_registered(tmp_path):
+    with running_server(tmp_path) as (process, messages, errors):
+        send(process, {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                       "params": {"protocolVersion": "2024-11-05", "capabilities": {},
+                                  "clientInfo": {"name": "test", "version": "1.0"}}})
+        assert "tools" in receive(messages)["result"]["capabilities"]
+        send(process, {"jsonrpc": "2.0", "method": "notifications/initialized"})
+        send(process, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+        assert receive(messages) == {"jsonrpc": "2.0", "id": 2, "result": {"tools": []}}
+        assert_clean_shutdown(process, messages)
