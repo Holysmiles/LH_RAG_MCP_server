@@ -35,13 +35,14 @@ class FakeEmbedding(BaseEmbedding):
 
     def __init__(self) -> None:
         self.calls: list[list[str]] = []
+        self.traces = []
 
     def embed(
         self,
         texts: list[str],
         trace: object | None = None,
     ) -> list[list[float]]:
-        del trace
+        self.traces.append(trace)
         self.calls.append(list(texts))
         return [
             [float(len(text.encode("utf-8")) + 1), float(index + 1)]
@@ -99,7 +100,7 @@ def make_settings(tmp_path: Path) -> Settings:
             "persist_directory": str(tmp_path / "data" / "db" / "chroma"),
             "collection_name": "pipeline_test",
         },
-        observability={"log_level": "INFO"},
+        observability={"log_level": "INFO", "trace_file": str(tmp_path / "logs/traces.jsonl")},
         ingestion={"batch_size": 2},
     )
 
@@ -134,6 +135,24 @@ def test_real_pdf_pipeline_persists_aligned_dense_sparse_and_image_data(
     )
 
     result = pipeline.run(IMAGE_PDF, collection="technical_docs")
+
+    trace_path = Path(settings.observability["trace_file"])
+    trace = json.loads(trace_path.read_text(encoding="utf-8"))
+    assert trace["trace_type"] == "ingestion" and trace["finished_at"] is not None
+    assert trace["total_elapsed_ms"] >= 0
+    stages = {item["stage"]: item for item in trace["stages"]}
+    phases = ["load", "split", "transform", "embed", "upsert"]
+    assert [item["stage"] for item in trace["stages"] if item["stage"] in phases] == phases
+    for name in phases:
+        assert stages[name]["elapsed_ms"] >= 0 and stages[name]["method"]
+        assert stages[name]["details"]["status"] == "completed"
+        assert stages[name]["details"]["collection"] == "technical_docs"
+    assert stages["load"]["method"] == "markitdown"
+    assert stages["split"]["method"] == "recursive"
+    assert stages["upsert"]["method"] == "chroma"
+    assert stages["upsert"]["details"]["record_count"] == result.chunk_count
+    assert {"chunk_refiner", "dense_encoder", "batch_processor", "vector_upserter"} <= stages.keys()
+    assert all(context.trace_id == trace["trace_id"] for context in fake_embedding.traces)
 
     assert result.status == "success"
     assert result.skipped is False
@@ -175,6 +194,11 @@ def test_real_pdf_pipeline_persists_aligned_dense_sparse_and_image_data(
     assert skipped.file_hash == result.file_hash
     assert len(fake_embedding.calls) == embedding_call_count
     assert bm25.document_count == result.chunk_count
+    saved = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
+    assert len(saved) == 2
+    assert saved[-1]["trace_id"] != saved[0]["trace_id"]
+    assert saved[-1]["stages"][0]["details"]["status"] == "skipped"
+    assert [item["stage"] for item in saved[-1]["stages"]] == ["integrity"]
 
 
 @pytest.mark.integration
@@ -203,6 +227,12 @@ def test_failed_stage_is_reported_and_integrity_status_remains_retryable(
     assert status == "failed"
     assert "corrupted PDF stream" in error
     assert not (tmp_path / "data" / "db" / "chroma").exists()
+    saved = json.loads(Path(settings.observability["trace_file"]).read_text(encoding="utf-8"))
+    assert saved["trace_type"] == "ingestion" and saved["finished_at"] is not None
+    assert saved["stages"][-1]["stage"] == "load"
+    assert saved["stages"][-1]["error_type"] == "ValueError"
+    assert saved["stages"][-1]["details"]["status"] == "failed"
+    assert "corrupted PDF stream" not in json.dumps(saved)
 
 
 @pytest.mark.integration
@@ -224,3 +254,32 @@ def test_transform_cannot_silently_break_chunk_identity(tmp_path: Path) -> None:
 
     assert exc.value.stage == "transform.IdentityBreakingTransform"
     assert checker.should_skip(checker.compute_sha256(source)) is False
+    saved = json.loads(Path(settings.observability["trace_file"]).read_text(encoding="utf-8"))
+    assert saved["stages"][-1]["stage"] == "transform"
+    assert saved["stages"][-1]["details"]["failed_step"] == "transform.IdentityBreakingTransform"
+
+
+@pytest.mark.integration
+def test_disabled_ingestion_trace_creates_no_trace_file(tmp_path):
+    settings = make_settings(tmp_path)
+    settings.observability["trace_enabled"] = False
+    pipeline = IngestionPipeline(settings, loader=FailingLoader(),
+                                 integrity_checker=SQLiteIntegrityChecker(tmp_path / "history.db"))
+    with pytest.raises(IngestionPipelineError):
+        pipeline.run(SIMPLE_PDF)
+    assert not Path(settings.observability["trace_file"]).exists()
+
+
+@pytest.mark.integration
+def test_trace_write_failure_does_not_mask_ingestion_failure(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    blocked = tmp_path / "blocked"
+    blocked.write_text("file", encoding="utf-8")
+    settings.observability["trace_file"] = str(blocked / "traces.jsonl")
+    checker = SQLiteIntegrityChecker(tmp_path / "history.db")
+    pipeline = IngestionPipeline(settings, loader=FailingLoader(), integrity_checker=checker)
+    with pytest.raises(IngestionPipelineError) as caught:
+        pipeline.run(SIMPLE_PDF)
+    assert caught.value.stage == "load"
+    assert checker.should_skip(checker.compute_sha256(SIMPLE_PDF)) is False
+    assert "Cannot persist ingestion trace" in capsys.readouterr().err

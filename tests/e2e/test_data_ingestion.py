@@ -102,7 +102,7 @@ def write_settings(tmp_path: Path, embedding_base_url: str) -> Path:
         },
         "rerank": {"provider": "none"},
         "evaluation": {"provider": "custom"},
-        "observability": {"log_level": "INFO"},
+        "observability": {"log_level": "INFO", "trace_file": str(tmp_path / "logs/traces.jsonl")},
         "ingestion": {
             "batch_size": 2,
             "integrity_db_path": str(tmp_path / "data" / "db" / "history.db"),
@@ -178,6 +178,12 @@ def test_cli_creates_indexes_skips_unchanged_and_force_reprocesses(
     assert (tmp_path / "data" / "db" / "history.db").is_file()
     assert (tmp_path / "data" / "db" / "bm25" / "index.json").is_file()
     assert any((tmp_path / "data" / "db" / "chroma").iterdir())
+    traces = [json.loads(line) for line in (tmp_path / "logs/traces.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert len(traces) == 3
+    assert all(trace["trace_type"] == "ingestion" and trace["finished_at"] is not None for trace in traces)
+    for trace in (traces[0], traces[2]):
+        assert {stage["stage"] for stage in trace["stages"]} >= {"load", "split", "transform", "embed", "upsert"}
+    assert traces[1]["stages"][0]["details"]["status"] == "skipped"
 
 
 @pytest.mark.e2e

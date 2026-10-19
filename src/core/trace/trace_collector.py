@@ -30,15 +30,15 @@ class TraceCollector:
 
 
 @contextmanager
-def query_trace(settings: "Settings", *, force: bool = False):
-    """Own a query's trace lifecycle; persistence failure cannot replace results.
+def request_trace(settings: "Settings", *, trace_type: str, force: bool = False):
+    """Own a request's trace lifecycle; persistence failure cannot replace results.
 
     ``force`` enables an in-memory trace for CLI verbose output even when file
     tracing is disabled. The writer still honors the configured trace switch.
     """
     from observability.logger import get_logger, write_trace
 
-    trace = TraceContext("query") if force or settings.observability.get("trace_enabled", True) else None
+    trace = TraceContext(trace_type) if force or settings.observability.get("trace_enabled", True) else None
     try:
         yield trace
     finally:
@@ -46,4 +46,12 @@ def query_trace(settings: "Settings", *, force: bool = False):
             try:
                 TraceCollector(lambda payload: write_trace(payload, settings)).collect(trace)
             except Exception as exc:
-                get_logger(__name__).warning("Cannot persist query trace: %s", type(exc).__name__)
+                get_logger(__name__).warning("Cannot persist %s trace: %s", trace_type, type(exc).__name__)
+
+
+def query_trace(settings: "Settings", *, force: bool = False):
+    return request_trace(settings, trace_type="query", force=force)
+
+
+def ingestion_trace(settings: "Settings"):
+    return request_trace(settings, trace_type="ingestion")

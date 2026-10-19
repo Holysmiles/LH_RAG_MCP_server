@@ -20,10 +20,13 @@ from dataclasses import dataclass
 import logging
 from pathlib import Path
 import re
+from time import perf_counter
 from typing import Any, Literal
 
 from core import Chunk, ChunkRecord, Document
 from core.settings import Settings
+from core.trace.trace_context import TraceContext
+from core.trace.trace_collector import ingestion_trace
 from ingestion.chunking.document_chunker import DocumentChunker
 from ingestion.embedding.batch_processor import BatchProcessResult, BatchProcessor
 from ingestion.embedding.sparse_encoder import SparseChunkEncoding
@@ -153,6 +156,13 @@ class IngestionPipeline:
         force: bool = False,
     ) -> IngestionResult:
         """摄取一个文件；除非 ``force``，未变化时返回 ``skipped``。"""
+        with ingestion_trace(self.settings) as trace:
+            return self._run(source_path, collection, force=force, trace=trace)
+
+    def _run(
+        self, source_path: str | Path, collection: str, *, force: bool,
+        trace: TraceContext | None,
+    ) -> IngestionResult:
         source = self._normalize_source_path(source_path)
         normalized_collection = self._normalize_collection(collection)
         if not isinstance(force, bool):
@@ -161,12 +171,32 @@ class IngestionPipeline:
         file_hash: str | None = None
         marked_processing = False
         stage = "integrity"
+        phase: dict[str, Any] | None = None
+
+        def start_phase(name: str, method: str) -> None:
+            nonlocal phase
+            phase = {"stage": name, "method": method, "started": perf_counter()}
+
+        def finish_phase(*, failure: Exception | None = None, **details: Any) -> None:
+            nonlocal phase
+            if trace is not None and phase is not None:
+                trace.record_stage(
+                    phase["stage"], {"details": {
+                        "source_path": str(source), "collection": normalized_collection,
+                        "status": "failed" if failure else "completed", **details,
+                    }},
+                    elapsed_ms=(perf_counter() - phase["started"]) * 1000,
+                    method=phase["method"], error_type=type(failure).__name__ if failure else None,
+                )
+            phase = None
 
         try:
+            start_phase("integrity", "sha256")
             self._log_stage(stage, "started", source, normalized_collection)
             file_hash = checker.compute_sha256(source)
             if checker.should_skip(file_hash) and not force:
                 self._log_stage(stage, "skipped", source, normalized_collection)
+                finish_phase(status="skipped", file_hash=file_hash)
                 return IngestionResult(
                     source_path=str(source),
                     collection=normalized_collection,
@@ -185,8 +215,12 @@ class IngestionPipeline:
             checker.mark_processing(file_hash, source, file_size=file_size)
             marked_processing = True
             self._log_stage(stage, "completed", source, normalized_collection)
+            finish_phase(file_hash=file_hash, force=force)
 
             stage = "load"
+            loader_method = ("markitdown" if self._loader is None or isinstance(self._loader, PdfLoader)
+                             else type(self._loader).__name__)
+            start_phase("load", loader_method)
             self._log_stage(stage, "started", source, normalized_collection)
             document = self._get_loader().load(source)
             document = self._prepare_document(
@@ -195,8 +229,10 @@ class IngestionPipeline:
                 file_hash=file_hash,
             )
             self._log_stage(stage, "completed", source, normalized_collection)
+            finish_phase(document_id=document.id, text_length=len(document.text))
 
             stage = "split"
+            start_phase("split", self.settings.splitter.get("provider", "splitter"))
             self._log_stage(stage, "started", source, normalized_collection)
             chunks = self._get_chunker().split_document(document)
             if not chunks:
@@ -208,12 +244,17 @@ class IngestionPipeline:
                 normalized_collection,
                 chunk_count=len(chunks),
             )
+            finish_phase(chunk_count=len(chunks))
 
+            stage = "transform"
+            start_phase("transform", "transform_pipeline")
+            transform_names = []
             for transform in self._get_transforms():
                 transform_name = type(transform).__name__
+                transform_names.append(transform_name)
                 stage = f"transform.{transform_name}"
                 self._log_stage(stage, "started", source, normalized_collection)
-                transformed = transform.transform(chunks)
+                transformed = transform.transform(chunks, trace=trace)
                 self._validate_transform_output(chunks, transformed, transform_name)
                 chunks = transformed
                 self._log_stage(
@@ -223,10 +264,12 @@ class IngestionPipeline:
                     normalized_collection,
                     chunk_count=len(chunks),
                 )
+            finish_phase(chunk_count=len(chunks), transforms=transform_names)
 
             stage = "encode"
+            start_phase("embed", self.settings.embedding.get("provider", "embedding"))
             self._log_stage(stage, "started", source, normalized_collection)
-            encoded = self._get_batch_processor().process(chunks)
+            encoded = self._get_batch_processor().process(chunks, trace=trace)
             self._validate_encoding_alignment(chunks, encoded)
             self._log_stage(
                 stage,
@@ -235,9 +278,12 @@ class IngestionPipeline:
                 normalized_collection,
                 batch_count=encoded.batch_count,
             )
+            finish_phase(chunk_count=len(chunks), batch_count=encoded.batch_count,
+                         vector_dimension=len(encoded.dense_vectors[0]) if encoded.dense_vectors else 0)
 
             # 图片先进入托管目录，随后写入 Chroma 的 metadata 才会指向最终路径。
             stage = "store.images"
+            start_phase("upsert", self.settings.vector_store.get("provider", "vector_store"))
             self._log_stage(stage, "started", source, normalized_collection)
             stored_chunks, image_count = self._store_images(
                 document,
@@ -257,6 +303,7 @@ class IngestionPipeline:
             vector_records = self._get_vector_upserter().upsert(
                 stored_chunks,
                 encoded.dense_vectors,
+                trace=trace,
             )
             self._validate_vector_records(stored_chunks, vector_records)
             self._log_stage(
@@ -294,6 +341,9 @@ class IngestionPipeline:
                 chunk_count=len(chunks),
             )
             self._log_stage(stage, "completed", source, normalized_collection)
+            finish_phase(record_count=len(vector_records), image_count=image_count,
+                         storages=["images", self.settings.vector_store.get("provider", "vector_store"), "bm25"],
+                         document_id=document.id)
             return IngestionResult(
                 source_path=str(source),
                 collection=normalized_collection,
@@ -306,6 +356,7 @@ class IngestionPipeline:
                 record_ids=tuple(record.id for record in vector_records),
             )
         except Exception as exc:
+            finish_phase(failure=exc, failed_step=stage)
             if marked_processing and file_hash is not None:
                 self._mark_failed_without_masking(
                     checker,
