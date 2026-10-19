@@ -132,7 +132,7 @@ def test_bundled_golden_set_evaluates_real_ingested_pdfs(tmp_path: Path) -> None
                           SparseRetriever(settings, bm25_indexer=bm25, vector_store=store), Fusion(settings))
     report = EvalRunner(settings, search, CustomEvaluator()).run(FIXTURE_DIR.parent / "golden_test_set.json")
     assert report.hit_rate == 1. and 0 < report.mrr <= 1.
-    assert len(report.results) == 2
+    assert len(report.results) == len(EvalRunner.load_test_set(FIXTURE_DIR.parent / "golden_test_set.json"))
     assert all(row["retrieved_ids"] for row in report.results)
 
 

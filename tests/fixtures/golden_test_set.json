@@ -10,6 +10,26 @@
       "query": "Text before the embedded image",
       "expected_chunk_ids": [],
       "expected_sources": ["with_images.pdf"]
+    },
+    {
+      "query": "This PDF contains text but no images",
+      "expected_chunk_ids": [],
+      "expected_sources": ["simple.pdf"]
+    },
+    {
+      "query": "PDF contains text",
+      "expected_chunk_ids": [],
+      "expected_sources": ["simple.pdf"]
+    },
+    {
+      "query": "Text after the embedded image",
+      "expected_chunk_ids": [],
+      "expected_sources": ["with_images.pdf"]
+    },
+    {
+      "query": "embedded image",
+      "expected_chunk_ids": [],
+      "expected_sources": ["with_images.pdf"]
     }
   ]
 }
