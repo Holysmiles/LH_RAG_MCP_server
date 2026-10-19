@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, ClassVar
 
 from core.settings import Settings
@@ -53,8 +53,36 @@ class EvaluatorFactory:
 
     @classmethod
     def create(cls, settings: Settings) -> BaseEvaluator:
-        """Build the provider selected by ``settings.evaluation.provider``."""
+        """Explicit backends compose providers; otherwise use the single provider."""
         config = cls._get_config(settings)
+        if "backends" in config:
+            from observability.evaluation.composite_evaluator import CompositeEvaluator
+
+            backends = config["backends"]
+            if isinstance(backends, (str, bytes)) or not isinstance(backends, Sequence) or not backends:
+                raise ValueError("evaluation.backends must be a nonempty sequence of providers")
+            configs, names = [], set()
+            for backend in backends:
+                selected = {key: value for key, value in config.items() if key != "backends"}
+                if isinstance(backend, str):
+                    selected["provider"] = backend
+                elif isinstance(backend, Mapping):
+                    if "backends" in backend:
+                        raise ValueError("Nested evaluation.backends are not supported")
+                    selected.update(backend)
+                    selected["provider"] = backend.get("provider")
+                else:
+                    raise ValueError("Each evaluation backend must be a provider name or mapping")
+                name = cls._get_provider_name(selected)
+                if name in names:
+                    raise ValueError(f"Duplicate evaluation backend: {name}")
+                names.add(name)
+                configs.append(selected)
+            return CompositeEvaluator([cls._build(selected) for selected in configs])
+        return cls._build(config)
+
+    @classmethod
+    def _build(cls, config: Mapping[str, Any]) -> BaseEvaluator:
         provider_name = cls._get_provider_name(config)
 
         builder = cls._providers.get(provider_name)

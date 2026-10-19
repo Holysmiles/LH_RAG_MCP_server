@@ -143,3 +143,11 @@ def test_real_ragas_metrics_with_mock_llm_and_embeddings(monkeypatch):
     scores = evaluator.evaluate("Where is Paris?", answer="Paris is in France.",
                                  contexts=["Paris is in France."], reference="Paris is in France.")
     assert scores == pytest.approx({"faithfulness": 1., "answer_relevancy": 1., "context_precision": 1.})
+    # Exercise Ragas's event-loop setup inside CompositeEvaluator's worker.
+    from libs.evaluator.custom_evaluator import CustomEvaluator
+    from observability.evaluation.composite_evaluator import CompositeEvaluator
+
+    evaluator.config["samples"] = {"Where is Paris?": {
+        "answer": "Paris is in France.", "contexts": ["Paris is in France."], "reference": "Paris is in France."}}
+    combined = CompositeEvaluator([evaluator, CustomEvaluator()]).evaluate("Where is Paris?", ["a"], ["a"])
+    assert combined == pytest.approx(dict(scores, hit_rate=1., mrr=1.))

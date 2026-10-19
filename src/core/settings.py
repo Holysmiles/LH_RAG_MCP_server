@@ -86,6 +86,11 @@ def validate_settings(settings: Settings) -> None:
     for field_path in REQUIRED_FIELDS:
         section_name, field_name = field_path.split(".", maxsplit=1)
         section = getattr(settings, section_name)
+        if field_path == "evaluation.provider" and "backends" in section:
+            backends = section["backends"]
+            if not isinstance(backends, (list, tuple)) or not backends:
+                raise SettingsError("evaluation.backends must be a nonempty list of providers")
+            continue
         value = section.get(field_name)
         if value is None or (isinstance(value, str) and not value.strip()):
             raise SettingsError(f"Missing required configuration field: {field_path}")

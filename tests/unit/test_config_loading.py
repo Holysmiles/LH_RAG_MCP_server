@@ -51,6 +51,23 @@ def test_load_settings_returns_structured_settings(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_evaluation_backends_can_replace_single_provider_in_yaml(tmp_path: Path) -> None:
+    config = deepcopy(VALID_CONFIG)
+    config["evaluation"] = {"backends": ["ragas", "custom"]}
+    settings = load_settings(write_config(tmp_path, config))
+    assert settings.evaluation == {"backends": ["ragas", "custom"]}
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("backends", [[], None, "custom"])
+def test_evaluation_backends_require_nonempty_list(tmp_path: Path, backends) -> None:
+    config = deepcopy(VALID_CONFIG)
+    config["evaluation"] = {"backends": backends}
+    with pytest.raises(SettingsError, match="evaluation.backends"):
+        load_settings(write_config(tmp_path, config))
+
+
+@pytest.mark.unit
 def test_load_settings_keeps_optional_vision_llm_configuration(
     tmp_path: Path,
 ) -> None:
