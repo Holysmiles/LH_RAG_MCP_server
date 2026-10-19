@@ -115,8 +115,10 @@ class BM25Indexer:
         if persist:
             self.save()
 
-    def remove_document(self, source: str, *, persist: bool = True) -> int:
-        """删除属于 ``source`` 的全部记录，并返回删除数量。"""
+    def remove_document(
+        self, source: str, *, persist: bool = True, chunk_ids: Sequence[str] | None = None,
+    ) -> int:
+        """删除来源记录；可用 chunk_ids 限定集合，保存失败时恢复内存。"""
         if not isinstance(source, str) or not source.strip():
             raise ValueError("source must be a non-empty string")
         normalized = source.strip()
@@ -128,12 +130,24 @@ class BM25Indexer:
         # 兼容早期直接把文档 ID 当作 Chunk ID 的调用方式。
         if not matching and normalized in self._records:
             matching.add(normalized)
+        if chunk_ids is not None:
+            if isinstance(chunk_ids, (str, bytes)) or not isinstance(chunk_ids, Sequence):
+                raise ValueError("chunk_ids must be a sequence of non-empty strings")
+            if any(not isinstance(item, str) or not item.strip() for item in chunk_ids):
+                raise ValueError("chunk_ids must be a sequence of non-empty strings")
+            matching.intersection_update(chunk_ids)
+        old_records, old_sources = dict(self._records), dict(self._chunk_sources)
         for chunk_id in matching:
             self._records.pop(chunk_id, None)
             self._chunk_sources.pop(chunk_id, None)
         self._rebuild()
         if persist:
-            self.save()
+            try:
+                self.save()
+            except Exception:
+                self._records, self._chunk_sources = old_records, old_sources
+                self._rebuild()
+                raise
         return len(matching)
 
     def query(self, query: str, top_k: int = 10) -> list[dict[str, Any]]:

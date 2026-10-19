@@ -235,9 +235,14 @@ class ImageStorage:
             })
         return results
 
-    def delete_document(self, doc_hash: str, *, delete_files: bool = True) -> int:
-        """删除源文档的托管文件，全部成功后再删除数据库行。"""
+    def delete_document(
+        self, doc_hash: str, *, delete_files: bool = True, collection: str | None = None,
+    ) -> int:
+        """可按集合删除源文档的托管文件，全部成功后再删除数据库行。"""
         normalized_hash = self._normalize_identifier(doc_hash, "doc_hash")
+        normalized_collection = self._normalize_optional_text(collection, "collection")
+        where = "doc_hash = ?" + (" AND collection = ?" if normalized_collection is not None else "")
+        parameters = (normalized_hash,) if normalized_collection is None else (normalized_hash, normalized_collection)
         token = uuid.uuid4().hex
         backups: list[tuple[Path, Path]] = []
         row_count = 0
@@ -245,8 +250,8 @@ class ImageStorage:
             with self._connection() as connection:
                 connection.execute("BEGIN IMMEDIATE")
                 rows = connection.execute(
-                    "SELECT file_path FROM image_index WHERE doc_hash = ?",
-                    (normalized_hash,),
+                    f"SELECT file_path FROM image_index WHERE {where}",
+                    parameters,
                 ).fetchall()
                 row_count = len(rows)
                 if delete_files:
@@ -266,8 +271,8 @@ class ImageStorage:
                             os.replace(path, backup)
                             backups.append((path, backup))
                 connection.execute(
-                    "DELETE FROM image_index WHERE doc_hash = ?",
-                    (normalized_hash,),
+                    f"DELETE FROM image_index WHERE {where}",
+                    parameters,
                 )
         except Exception:
             # DELETE 或 COMMIT 失败时把已经移走的文件原位恢复，便于安全重试。

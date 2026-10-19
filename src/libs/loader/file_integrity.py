@@ -224,6 +224,23 @@ class SQLiteIntegrityChecker(FileIntegrityChecker):
                     "file_path is required when marking an unknown hash as failed"
                 )
 
+    def list_processed(self) -> list[dict[str, object]]:
+        """Return successful ingestion history, without reading source files."""
+        with self._connection() as connection:
+            cursor = connection.execute(
+                "SELECT file_hash, file_path, file_size, processed_at, chunk_count "
+                "FROM ingestion_history WHERE status = 'success' ORDER BY file_path, file_hash"
+            )
+            names = [column[0] for column in cursor.description]
+            return [dict(zip(names, row)) for row in cursor.fetchall()]
+
+    def remove_record(self, file_hash: str) -> bool:
+        """Remove the exact hash so a later ingestion can process it again."""
+        normalized_hash = _normalize_sha256(file_hash)
+        with self._connection() as connection:
+            cursor = connection.execute("DELETE FROM ingestion_history WHERE file_hash = ?", (normalized_hash,))
+            return cursor.rowcount > 0
+
     def _upsert_status(
         self,
         *,

@@ -227,6 +227,20 @@ class ChromaStore(BaseVectorStore):
                     documents.add((collection, identity))
         return {"chunk_count": len(ids), "document_count": len(documents), "collection_count": len(collections)}
 
+    def list_records(self) -> list[StoredVectorRecord]:
+        """Read all persisted chunks without loading embeddings."""
+        response = self._collection.get(include=["documents", "metadatas"])
+        if not isinstance(response, Mapping) or not isinstance(response.get("ids"), list):
+            raise RuntimeError("chroma response error: invalid list response")
+        return sorted(self._convert_get_response(response, response["ids"]), key=lambda row: row["id"])
+
+    def delete_by_metadata(self, filters: Mapping[str, Any]) -> int:
+        """Delete only explicit metadata matches; empty filters are forbidden."""
+        records = self.get_by_metadata(filters)
+        if records:
+            self._collection.delete(ids=[record["id"] for record in records])
+        return len(records)
+
     def get_by_metadata(
         self, filters: Mapping[str, Any], trace: TraceContext | None = None,
     ) -> list[StoredVectorRecord]:

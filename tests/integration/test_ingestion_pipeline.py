@@ -16,6 +16,7 @@ import pytest
 from core import Chunk, Document
 from core.settings import Settings
 from ingestion import IngestionPipeline, IngestionPipelineError
+from ingestion.document_manager import DocumentManager
 from ingestion.chunking import DocumentChunker
 from ingestion.embedding import BatchProcessor, DenseEncoder, SparseEncoder
 from ingestion.storage import BM25Indexer, ImageStorage, VectorUpserter
@@ -103,6 +104,38 @@ def make_settings(tmp_path: Path) -> Settings:
         observability={"log_level": "INFO", "trace_file": str(tmp_path / "logs/traces.jsonl")},
         ingestion={"batch_size": 2},
     )
+
+
+@pytest.mark.integration
+def test_real_pdf_can_be_deleted_and_ingested_again(tmp_path: Path) -> None:
+    settings = make_settings(tmp_path)
+    checker = SQLiteIntegrityChecker(tmp_path / "history.db")
+    store = ChromaStore(settings.vector_store)
+    bm25 = BM25Indexer(tmp_path / "bm25")
+    images = ImageStorage(tmp_path / "images", tmp_path / "images.db")
+    pipeline = IngestionPipeline(
+        settings, integrity_checker=checker,
+        loader=PdfLoader(image_root=tmp_path / "extracted"),
+        chunker=DocumentChunker(settings),
+        batch_processor=BatchProcessor(
+            settings, dense_encoder=DenseEncoder(settings, embedding=FakeEmbedding()),
+            sparse_encoder=SparseEncoder()),
+        vector_upserter=VectorUpserter(settings, store=store),
+        bm25_indexer=bm25, image_storage=images,
+    )
+    manager = DocumentManager(store, bm25, images, checker)
+    first = pipeline.run(IMAGE_PDF, collection="docs")
+    document = manager.list_documents("docs")[0]
+    assert document.chunk_count == first.chunk_count and document.image_count == first.image_count == 1
+    assert len(manager.get_document_detail(first.document_id).chunks) == first.chunk_count
+    assert pipeline.run(IMAGE_PDF, collection="docs").skipped
+    deletion = manager.delete_document(IMAGE_PDF, "docs")
+    assert deletion.success and deletion.deleted_chunks == first.chunk_count
+    assert not manager.list_documents() and not images.list_images()
+    assert bm25.document_count == 0 and not checker.should_skip(first.file_hash)
+    again = pipeline.run(IMAGE_PDF, collection="docs")
+    assert not again.skipped and again.chunk_count == first.chunk_count
+    assert manager.get_collection_stats("docs").image_count == 1
 
 
 @pytest.mark.integration
