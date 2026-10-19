@@ -134,7 +134,11 @@ def test_real_pdf_pipeline_persists_aligned_dense_sparse_and_image_data(
         image_storage=images,
     )
 
-    result = pipeline.run(IMAGE_PDF, collection="technical_docs")
+    progress = []
+    result = pipeline.run(IMAGE_PDF, collection="technical_docs",
+                          on_progress=lambda *event: progress.append(event))
+    assert progress == [(name, index, 6) for index, name in enumerate(
+        ["integrity", "load", "split", "transform", "embed", "upsert"], start=1)]
 
     trace_path = Path(settings.observability["trace_file"])
     trace = json.loads(trace_path.read_text(encoding="utf-8"))

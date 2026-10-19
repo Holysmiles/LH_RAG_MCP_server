@@ -14,7 +14,7 @@ BM25、图片目录和 SQLite 无法共享一个物理事务，因此这里采�
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 import logging
@@ -50,6 +50,7 @@ from observability.logger import get_logger
 _DEFAULT_IMAGE_ROOT = Path("data/images")
 _DEFAULT_IMAGE_INDEX_PATH = Path("data/db/image_index.db")
 _SAFE_COLLECTION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+_PROGRESS_STAGES = ("integrity", "load", "split", "transform", "embed", "upsert")
 
 
 class IngestionPipelineError(RuntimeError):
@@ -154,14 +155,24 @@ class IngestionPipeline:
         collection: str = "default",
         *,
         force: bool = False,
+        on_progress: Callable[[str, int, int], None] | None = None,
     ) -> IngestionResult:
-        """摄取一个文件；除非 ``force``，未变化时返回 ``skipped``。"""
+        """Ingest a file and optionally report completed overall stages.
+
+        The synchronous callback receives (stage_name, completed, total), with
+        total=6 for integrity/load/split/transform/embed/upsert. Skipped files
+        report (integrity, 6, 6). Failed stages never report completion, and
+        observer errors are logged without changing ingestion status.
+        """
+        if on_progress is not None and not callable(on_progress):
+            raise TypeError("on_progress must be callable or None")
         with ingestion_trace(self.settings) as trace:
-            return self._run(source_path, collection, force=force, trace=trace)
+            return self._run(source_path, collection, force=force, trace=trace, on_progress=on_progress)
 
     def _run(
         self, source_path: str | Path, collection: str, *, force: bool,
         trace: TraceContext | None,
+        on_progress: Callable[[str, int, int], None] | None,
     ) -> IngestionResult:
         source = self._normalize_source_path(source_path)
         normalized_collection = self._normalize_collection(collection)
@@ -172,13 +183,15 @@ class IngestionPipeline:
         marked_processing = False
         stage = "integrity"
         phase: dict[str, Any] | None = None
+        completed = 0
 
         def start_phase(name: str, method: str) -> None:
             nonlocal phase
             phase = {"stage": name, "method": method, "started": perf_counter()}
 
         def finish_phase(*, failure: Exception | None = None, **details: Any) -> None:
-            nonlocal phase
+            nonlocal phase, completed
+            current_phase = phase
             if trace is not None and phase is not None:
                 trace.record_stage(
                     phase["stage"], {"details": {
@@ -189,6 +202,13 @@ class IngestionPipeline:
                     method=phase["method"], error_type=type(failure).__name__ if failure else None,
                 )
             phase = None
+            if current_phase is not None and failure is None:
+                completed = len(_PROGRESS_STAGES) if details.get("status") == "skipped" else completed + 1
+                if on_progress is not None:
+                    try:
+                        on_progress(current_phase["stage"], completed, len(_PROGRESS_STAGES))
+                    except Exception as exc:
+                        self.logger.warning("Ingestion progress callback failed: %s", type(exc).__name__)
 
         try:
             start_phase("integrity", "sha256")
