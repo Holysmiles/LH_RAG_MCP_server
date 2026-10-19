@@ -12,6 +12,8 @@ from pathlib import Path
 import sqlite3
 
 import pytest
+import yaml
+from streamlit.testing.v1 import AppTest
 
 from core import Chunk, Document
 from core.settings import Settings
@@ -107,7 +109,7 @@ def make_settings(tmp_path: Path) -> Settings:
 
 
 @pytest.mark.integration
-def test_real_pdf_can_be_deleted_and_ingested_again(tmp_path: Path) -> None:
+def test_real_pdf_can_be_deleted_ingested_again_and_browsed(tmp_path: Path, monkeypatch) -> None:
     settings = make_settings(tmp_path)
     checker = SQLiteIntegrityChecker(tmp_path / "history.db")
     store = ChromaStore(settings.vector_store)
@@ -136,6 +138,19 @@ def test_real_pdf_can_be_deleted_and_ingested_again(tmp_path: Path) -> None:
     again = pipeline.run(IMAGE_PDF, collection="docs")
     assert not again.skipped and again.chunk_count == first.chunk_count
     assert manager.get_collection_stats("docs").image_count == 1
+    root = Path(__file__).resolve().parents[2]
+    config = yaml.safe_load((root / "config/settings.yaml").read_text(encoding="utf-8"))
+    config["vector_store"] = settings.vector_store
+    config["ingestion"] = {"image_root": str(images.root), "image_index_db_path": str(images.db_path),
+                           "integrity_db_path": str(checker.db_path)}
+    config_path = tmp_path / "dashboard.yaml"
+    config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    monkeypatch.setenv("RAG_SETTINGS_PATH", str(config_path))
+    app = AppTest.from_file(root / "src/observability/dashboard/app.py", default_timeout=30).run()
+    app.switch_page("pages/data_browser.py").run()
+    assert not app.exception and not app.error and not app.warning
+    assert list(app.dataframe[0].value["文本块数"]) == [again.chunk_count]
+    assert len(app.json) == again.chunk_count
 
 
 @pytest.mark.integration
