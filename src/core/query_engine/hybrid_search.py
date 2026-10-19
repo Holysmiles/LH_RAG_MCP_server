@@ -1,8 +1,9 @@
 """Hybrid dense and sparse retrieval orchestration."""
 from __future__ import annotations
 
-from collections.abc import Mapping
-from concurrent.futures import Future, ThreadPoolExecutor
+from collections.abc import Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor
+from time import perf_counter
 from typing import Any
 
 from core.settings import Settings
@@ -35,7 +36,14 @@ class HybridSearch:
     ) -> list[RetrievalResult]:
         if top_k is not None and (isinstance(top_k, bool) or not isinstance(top_k, int) or top_k < 1):
             raise ValueError("top_k must be a positive integer")
+        started = perf_counter()
         processed = self.query_processor.process(query, filters)
+        if trace is not None:
+            trace.record_stage(
+                "query_processing", elapsed_ms=(perf_counter() - started) * 1000,
+                method="keyword_extraction", provider="builtin",
+                details={"details": {"query": processed.query, "keywords": processed.keywords, "filters": processed.filters}},
+            )
         selected_top_k = self.fusion.top_k if top_k is None else top_k
         # Recall budgets are independent of the final result count. Increasing
         # Top-K may widen recall, but a small Top-K must not discard candidates
@@ -44,21 +52,25 @@ class HybridSearch:
         sparse_k = max(self.settings.retrieval.get("sparse_top_k", 20), selected_top_k)
         with ThreadPoolExecutor(max_workers=2) as pool:
             dense_future = pool.submit(
-                self.dense_retriever.retrieve, processed.query, dense_k, processed.filters, trace
+                self._timed_retrieve, self.dense_retriever.retrieve,
+                processed.query, dense_k, processed.filters, trace
             )
             sparse_future = pool.submit(
-                self.sparse_retriever.retrieve, processed.keywords, sparse_k, trace
+                self._timed_retrieve, self.sparse_retriever.retrieve, processed.keywords, sparse_k, trace
             )
-            dense, dense_error = self._safe_result(dense_future)
-            sparse, sparse_error = self._safe_result(sparse_future)
+            dense, dense_error, dense_ms = dense_future.result()
+            sparse, sparse_error, sparse_ms = sparse_future.result()
         if trace is not None:
-            for name, results, error in (
-                ("dense_retrieval", dense, dense_error),
-                ("sparse_retrieval", sparse, sparse_error),
+            for name, results, error, elapsed, method, provider, budget in (
+                ("dense_retrieval", dense, dense_error, dense_ms, "dense",
+                 self.settings.embedding.get("provider", "unknown"), dense_k),
+                ("sparse_retrieval", sparse, sparse_error, sparse_ms, "bm25", "bm25", sparse_k),
             ):
                 trace.record_stage(
                     name, results=[item.to_dict() for item in results],
                     fallback=error is not None, error_type=error,
+                    elapsed_ms=elapsed, method=method, provider=provider,
+                    details={"details": {"top_k": budget, "output_count": len(results)}},
                 )
         if dense_error is not None and sparse_error is not None:
             raise RuntimeError(
@@ -66,23 +78,30 @@ class HybridSearch:
             )
         # Filter both routes before fusion's Top-K truncation so high-ranked
         # chunks from other collections cannot crowd out eligible candidates.
+        started = perf_counter()
         fused = self.fusion.fuse(
             self._apply_metadata_filters(dense, processed.filters),
             self._apply_metadata_filters(sparse, processed.filters),
             top_k=selected_top_k,
         )
         if trace is not None:
-            trace.record_stage("fusion", results=[item.to_dict() for item in fused])
+            trace.record_stage(
+                "fusion", results=[item.to_dict() for item in fused],
+                elapsed_ms=(perf_counter() - started) * 1000, method="rrf", provider="builtin",
+                details={"details": {"dense_count": len(dense), "sparse_count": len(sparse), "output_count": len(fused)}},
+            )
         return fused
 
     @staticmethod
-    def _safe_result(
-        future: Future[list[RetrievalResult]],
-    ) -> tuple[list[RetrievalResult], str | None]:
+    def _timed_retrieve(
+        retrieve: Callable[..., list[RetrievalResult]], *args: Any,
+    ) -> tuple[list[RetrievalResult], str | None, float]:
+        started = perf_counter()
         try:
-            return future.result(), None
+            results, error = retrieve(*args), None
         except Exception as exc:
-            return [], type(exc).__name__
+            results, error = [], type(exc).__name__
+        return results, error, (perf_counter() - started) * 1000
 
     @staticmethod
     def _apply_metadata_filters(candidates: list[RetrievalResult], filters: Mapping[str, Any]) -> list[RetrievalResult]:

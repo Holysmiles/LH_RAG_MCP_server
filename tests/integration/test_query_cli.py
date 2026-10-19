@@ -100,6 +100,12 @@ def test_cli_collection_top_k_verbose_and_actual_llm_reranking(tmp_path, cli_dat
     request = json.loads(chat_calls[0]["messages"][-1]["content"])
     assert len(request["candidates"]) == 2  # Final Top-1 did not prematurely truncate rerank input.
     assert "fallback=false" in result.stdout
+    traces = [json.loads(line) for line in (tmp_path / "logs/traces.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert len(traces) == 1
+    assert traces[0]["trace_type"] == "query" and traces[0]["finished_at"] is not None
+    assert {stage["stage"] for stage in traces[0]["stages"]} >= {
+        "query_processing", "dense_retrieval", "sparse_retrieval", "fusion", "rerank",
+    }
 
 
 def test_no_rerank_skips_backend_even_when_provider_is_invalid(tmp_path, cli_data):

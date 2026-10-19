@@ -371,6 +371,13 @@ def test_query_knowledge_hub_real_retrieval_citations_and_reranking(tmp_path, kn
         assert empty["structuredContent"]["citations"] == []
         assert "未找到相关文档" in empty["content"][0]["text"]
         assert_clean_shutdown(process, messages)
+    traces = [json.loads(line) for line in (tmp_path / "logs/traces.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert len(traces) == 3
+    for trace in traces:
+        assert trace["trace_type"] == "query" and trace["finished_at"] is not None
+        stages = {stage["stage"]: stage for stage in trace["stages"]}
+        assert {"query_processing", "dense_retrieval", "sparse_retrieval", "fusion", "rerank"} <= stages.keys()
+        assert all(stages[name]["elapsed_ms"] >= 0 and stages[name]["method"] for name in stages)
 
 
 def test_query_knowledge_hub_rejects_invalid_arguments_before_backend_initialization(tmp_path):

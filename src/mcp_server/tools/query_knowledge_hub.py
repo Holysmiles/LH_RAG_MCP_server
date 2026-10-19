@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from core.response.response_builder import MCPResponse, ResponseBuilder
 from core.response.multimodal_assembler import MultimodalAssembler
 from core.settings import Settings
+from core.trace.trace_collector import query_trace
 
 if TYPE_CHECKING:
     from core.query_engine.hybrid_search import HybridSearch
@@ -71,16 +72,17 @@ def query_knowledge_hub(
             settings, processor, DenseRetriever(settings, vector_store=store),
             SparseRetriever(settings, vector_store=store), Fusion(settings),
         )
-    candidates = hybrid_search.search(
-        query, top_k=candidate_k,
-        filters={"collection": collection} if collection is not None else None,
-    )
-    results = reranker.rerank(query, candidates, top_k=selected_k)
-    assembler = MultimodalAssembler(
-        image_root=settings.ingestion.get("image_root", "data/images"),
-        image_index_db_path=settings.ingestion.get("image_index_db_path", "data/db/image_index.db"),
-    )
-    return ResponseBuilder(assembler).build(results, query)
+    with query_trace(settings) as trace:
+        candidates = hybrid_search.search(
+            query, top_k=candidate_k,
+            filters={"collection": collection} if collection is not None else None, trace=trace,
+        )
+        results = reranker.rerank(query, candidates, top_k=selected_k, trace=trace)
+        assembler = MultimodalAssembler(
+            image_root=settings.ingestion.get("image_root", "data/images"),
+            image_index_db_path=settings.ingestion.get("image_index_db_path", "data/db/image_index.db"),
+        )
+        return ResponseBuilder(assembler).build(results, query)
 
 
 def register_query_tool(handler: ProtocolHandler, settings: Settings) -> None:

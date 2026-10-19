@@ -1,9 +1,13 @@
 """Finalize a trace and pass its JSON snapshot to the persistence boundary."""
 
 from collections.abc import Callable
-from typing import Any
+from contextlib import contextmanager
+from typing import Any, TYPE_CHECKING
 
 from core.trace.trace_context import TraceContext
+
+if TYPE_CHECKING:
+    from core.settings import Settings
 
 
 class TraceCollector:
@@ -23,3 +27,23 @@ class TraceCollector:
             raise TypeError("trace must be a TraceContext")
         trace.finish()
         self._writer(trace.to_dict())
+
+
+@contextmanager
+def query_trace(settings: "Settings", *, force: bool = False):
+    """Own a query's trace lifecycle; persistence failure cannot replace results.
+
+    ``force`` enables an in-memory trace for CLI verbose output even when file
+    tracing is disabled. The writer still honors the configured trace switch.
+    """
+    from observability.logger import get_logger, write_trace
+
+    trace = TraceContext("query") if force or settings.observability.get("trace_enabled", True) else None
+    try:
+        yield trace
+    finally:
+        if trace is not None:
+            try:
+                TraceCollector(lambda payload: write_trace(payload, settings)).collect(trace)
+            except Exception as exc:
+                get_logger(__name__).warning("Cannot persist query trace: %s", type(exc).__name__)

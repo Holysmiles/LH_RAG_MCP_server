@@ -58,7 +58,9 @@ def test_missing_citation_metadata_is_explicit_without_inventing_a_page():
 
 @pytest.fixture
 def settings():
-    return load_settings(Path(__file__).resolve().parents[2] / "config/settings.yaml")
+    settings = load_settings(Path(__file__).resolve().parents[2] / "config/settings.yaml")
+    settings.observability["trace_enabled"] = False
+    return settings
 
 
 def test_query_preserves_candidates_until_after_reranking(settings):
@@ -71,7 +73,7 @@ def test_query_preserves_candidates_until_after_reranking(settings):
         calls.append(("search", query, kwargs))
         return candidates
 
-    def rerank(query, items, top_k):
+    def rerank(query, items, top_k, trace=None):
         calls.append(("rerank", query, items, top_k))
         return list(reversed(items))[:top_k]
 
@@ -80,7 +82,7 @@ def test_query_preserves_candidates_until_after_reranking(settings):
         hybrid_search=SimpleNamespace(search=search),
         reranker=SimpleNamespace(enabled=True, provider="llm", rerank=rerank),
     )
-    assert calls[0] == ("search", "Azure", {"top_k": 4, "filters": {"collection": "alpha"}})
+    assert calls[0] == ("search", "Azure", {"top_k": 4, "filters": {"collection": "alpha"}, "trace": None})
     assert calls[1] == ("rerank", "Azure", candidates, 1)
     assert response["structuredContent"]["citations"][0]["chunk_id"] == "c"
 
@@ -90,7 +92,7 @@ def test_query_uses_configured_default_count(settings):
     calls = []
     hybrid = SimpleNamespace(search=lambda query, **kwargs: [result("a"), result("b")])
     reranker = SimpleNamespace(enabled=False, provider="none",
-                              rerank=lambda query, items, top_k: calls.append(top_k) or items[:top_k])
+                              rerank=lambda query, items, top_k, trace=None: calls.append(top_k) or items[:top_k])
     response = query_knowledge_hub("Azure", settings=settings, hybrid_search=hybrid, reranker=reranker)
     assert calls == [1]
     assert response["structuredContent"]["total"] == 1

@@ -153,6 +153,8 @@ class Reranker:
             trace.record_stage(
                 "rerank",
                 provider=self.provider,
+                method=self.provider if self.enabled else "none",
+                details={"details": {"input_count": len(original), "output_count": len(selected)}},
                 fallback=fallback,
                 reason=reason,
                 error_type=error_type,

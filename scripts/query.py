@@ -62,7 +62,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Help and argument errors do not initialize model or database dependencies.
     from core.query_engine import DenseRetriever, Fusion, HybridSearch, QueryProcessor, Reranker, SparseRetriever
     from core.settings import load_settings
-    from core.trace.trace_context import TraceContext
+    from core.trace.trace_collector import query_trace
     from core.types import RetrievalResult
     from libs.vector_store.vector_store_factory import VectorStoreFactory
     from observability.logger import get_logger
@@ -91,17 +91,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         logger.error("Cannot initialize query components: %s", type(exc).__name__)
         return 1
 
-    trace = TraceContext() if args.verbose else None
     try:
-        candidates = hybrid.search(
-            args.query, top_k=candidate_k,
-            filters={"collection": args.collection} if args.collection else None,
-            trace=trace,
-        )
-        results = (
-            candidates[:args.top_k] if reranker is None
-            else reranker.rerank(args.query, candidates, top_k=args.top_k, trace=trace)
-        )
+        with query_trace(settings, force=args.verbose) as trace:
+            candidates = hybrid.search(
+                args.query, top_k=candidate_k,
+                filters={"collection": args.collection} if args.collection else None,
+                trace=trace,
+            )
+            results = (
+                candidates[:args.top_k] if reranker is None
+                else reranker.rerank(args.query, candidates, top_k=args.top_k, trace=trace)
+            )
+            if reranker is None and trace is not None:
+                trace.record_stage("rerank", elapsed_ms=0, method="none", provider="none",
+                                   fallback=False, reason="skipped", details={"details": {"output_count": len(results)}})
     except Exception as exc:
         logger.error("Query failed: %s", type(exc).__name__)
         return 1
