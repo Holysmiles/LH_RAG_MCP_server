@@ -13,11 +13,18 @@ from libs.evaluator.custom_evaluator import CustomEvaluator
 EvaluatorBuilder = Callable[[Mapping[str, Any]], BaseEvaluator]
 
 
+def _create_ragas(config: Mapping[str, Any]) -> BaseEvaluator:
+    from observability.evaluation.ragas_evaluator import RagasEvaluator
+
+    return RagasEvaluator(config)
+
+
 class EvaluatorFactory:
     """Create registered evaluators from ``Settings.evaluation``."""
 
     _providers: ClassVar[dict[str, EvaluatorBuilder]] = {
         "custom": CustomEvaluator,
+        "ragas": _create_ragas,
     }
 
     @classmethod
