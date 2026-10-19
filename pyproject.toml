@@ -17,7 +17,7 @@ dependencies = [
     "jieba>=0.42",
     "markitdown[pdf]>=0.1.0",
     "Pillow>=10.0,<13.0",
-    "streamlit>=1.30.0",
+    "streamlit>=1.36.0,<2.0.0",
     # Ragas 0.3 still imports a module removed by langchain-community 0.4.
     # Keep both packages in the version range that can be imported together.
     "ragas>=0.3.9,<0.4.0",

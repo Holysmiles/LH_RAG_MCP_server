@@ -52,7 +52,7 @@ class ChromaStore(BaseVectorStore):
     default_collection_name: ClassVar[str] = "knowledge_hub"
     _metadata_json_field: ClassVar[str] = "__rag_metadata_json"
 
-    def __init__(self, config: Mapping[str, object]) -> None:
+    def __init__(self, config: Mapping[str, object], *, create_if_missing: bool = True) -> None:
         """打开配置指定的持久化数据库和 Collection。"""
         if not isinstance(config, Mapping):
             self._raise_configuration("configuration must be a mapping")
@@ -77,11 +77,14 @@ class ChromaStore(BaseVectorStore):
 
         # 向量由应用自己生成；禁用 Chroma 内置模型可避免重复下载和重复编码。
         # Collection 使用余弦距离，与项目语义检索的分数定义保持一致。
-        self._collection = self._client.get_or_create_collection(
-            name=self.collection_name,
-            metadata={"hnsw:space": "cosine"},
-            embedding_function=None,
-        )
+        if create_if_missing:
+            self._collection = self._client.get_or_create_collection(
+                name=self.collection_name,
+                metadata={"hnsw:space": "cosine"},
+                embedding_function=None,
+            )
+        else:
+            self._collection = self._client.get_collection(name=self.collection_name, embedding_function=None)
 
     def upsert(
         self,
@@ -206,6 +209,23 @@ class ChromaStore(BaseVectorStore):
             include=["documents", "metadatas"],
         )
         return self._convert_get_response(response, normalized_ids)
+
+    def get_collection_stats(self) -> dict[str, int]:
+        """Count persisted chunks, logical documents and logical collections."""
+        response = self._collection.get(include=["metadatas"])
+        ids, metadata = response.get("ids"), response.get("metadatas")
+        if not isinstance(ids, list) or not isinstance(metadata, list) or len(ids) != len(metadata):
+            raise RuntimeError("chroma response error: invalid statistics response")
+        documents, collections = set(), set()
+        for item in metadata:
+            fields = self._decode_metadata(item)
+            collection = fields.get("collection", "default")
+            identity = fields.get("document_id") or fields.get("source_ref") or fields.get("source_path")
+            if isinstance(collection, str) and collection:
+                collections.add(collection)
+                if isinstance(identity, str) and identity:
+                    documents.add((collection, identity))
+        return {"chunk_count": len(ids), "document_count": len(documents), "collection_count": len(collections)}
 
     def get_by_metadata(
         self, filters: Mapping[str, Any], trace: TraceContext | None = None,
