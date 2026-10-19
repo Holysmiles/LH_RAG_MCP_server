@@ -160,6 +160,9 @@ class Reranker:
                 error_type=error_type,
                 input_count=len(original),
                 output_count=len(selected),
+                input_ids=[item.chunk_id for item in original],
+                output_ids=[item.chunk_id for item in ranked],
+                selected_ids=[item.chunk_id for item in selected],
                 elapsed_ms=(perf_counter() - started) * 1000,
             )
         return list(selected)

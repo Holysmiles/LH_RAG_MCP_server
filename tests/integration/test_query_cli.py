@@ -10,6 +10,7 @@ from threading import Thread
 
 import pytest
 import yaml
+from streamlit.testing.v1 import AppTest
 
 from core.types import Chunk
 from ingestion.embedding.sparse_encoder import SparseEncoder
@@ -85,7 +86,7 @@ def run_cli(tmp_path, *args):
                           env=env, capture_output=True, text=True, encoding="utf-8", timeout=45)
 
 
-def test_cli_collection_top_k_verbose_and_actual_llm_reranking(tmp_path, cli_data):
+def test_cli_collection_top_k_verbose_and_actual_llm_reranking(tmp_path, cli_data, monkeypatch):
     path, config, calls = cli_data
     result = run_cli(tmp_path, "--settings", str(path), "--query", "Azure", "--collection", "alpha", "--top-k", "1", "--verbose")
     assert result.returncode == 0, result.stderr
@@ -106,6 +107,19 @@ def test_cli_collection_top_k_verbose_and_actual_llm_reranking(tmp_path, cli_dat
     assert {stage["stage"] for stage in traces[0]["stages"]} >= {
         "query_processing", "dense_retrieval", "sparse_retrieval", "fusion", "rerank",
     }
+    rerank = next(stage for stage in traces[0]["stages"] if stage["stage"] == "rerank")
+    assert rerank["input_ids"] == ["a", "b"] and rerank["output_ids"] == ["b", "a"]
+    assert rerank["selected_ids"] == ["b"]
+    config["observability"]["trace_file"] = str(tmp_path / "logs/traces.jsonl")
+    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    monkeypatch.setenv("RAG_SETTINGS_PATH", str(path))
+    app = AppTest.from_file(PROJECT_ROOT / "src/observability/dashboard/app.py", default_timeout=30).run()
+    app.switch_page("pages/query_traces.py").run()
+    assert not app.exception and not app.error
+    assert list(app.dataframe[0].value["查询"]) == ["Azure"]
+    assert list(app.dataframe[1].value["Chunk ID"]) == ["b", "a"]
+    assert list(app.dataframe[1].value["上升名次"]) == [1, -1]
+    assert len(app.get("vega_lite_chart")) == 1
 
 
 def test_no_rerank_skips_backend_even_when_provider_is_invalid(tmp_path, cli_data):

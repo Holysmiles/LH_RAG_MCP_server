@@ -82,3 +82,31 @@ def test_statuses_and_top_level_durations_do_not_double_count_nested_stages(tmp_
     record["stages"] = []
     path.write_text(json.dumps(record), encoding="utf-8")
     assert service.load_traces()[0].status == "running"
+
+
+def test_query_route_snapshots_rank_changes_and_legacy_fallback(tmp_path):
+    record = snapshot(kind="query")
+    record["stages"] = [
+        {"stage": "query_processing", "elapsed_ms": 1, "details": {"query": "Azure"}},
+        {"stage": "dense_retrieval", "elapsed_ms": 3, "results": [
+            {"chunk_id": "a", "score": 0.9, "text": "first", "metadata": {"page": 1}}]},
+        {"stage": "sparse_retrieval", "elapsed_ms": 2, "fallback": True, "error_type": "OSError"},
+        {"stage": "fusion", "elapsed_ms": 1},
+        {"stage": "rerank", "elapsed_ms": 4, "input_ids": ["a", "b"],
+         "output_ids": ["b", "a"], "selected_ids": ["b"]},
+    ]
+    path = tmp_path / "trace.jsonl"
+    path.write_text(json.dumps(record), encoding="utf-8")
+    service = TraceService(path)
+    trace = service.load_traces("query")[0]
+    assert trace.status == "degraded"
+    assert trace.detail("query") == "Azure"
+    assert len(service.query_timings(trace)) == 5
+    assert service.route_results(trace, "dense_retrieval")[0]["metadata"] == {"page": 1}
+    assert service.route_results(trace, "sparse_retrieval") == []
+    assert service.rank_changes(trace) == [
+        {"chunk_id": "b", "before": 2, "after": 1, "change": 1, "selected": True},
+        {"chunk_id": "a", "before": 1, "after": 2, "change": -1, "selected": False}]
+    del record["stages"][-1]["input_ids"]
+    path.write_text(json.dumps(record), encoding="utf-8")
+    assert service.rank_changes(service.load_traces()[0]) == []

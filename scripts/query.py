@@ -104,6 +104,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             if reranker is None and trace is not None:
                 trace.record_stage("rerank", elapsed_ms=0, method="none", provider="none",
+                                   input_ids=[item.chunk_id for item in candidates],
+                                   output_ids=[item.chunk_id for item in candidates],
+                                   selected_ids=[item.chunk_id for item in results],
                                    fallback=False, reason="skipped", details={"details": {"output_count": len(results)}})
     except Exception as exc:
         logger.error("Query failed: %s", type(exc).__name__)

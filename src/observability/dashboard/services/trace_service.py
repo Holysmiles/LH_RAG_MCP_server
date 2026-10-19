@@ -21,6 +21,12 @@ class TraceRecord:
 
     @property
     def status(self) -> str:
+        if self.trace_type == "query":
+            if not self.finished_at:
+                return "running"
+            if any(stage["stage"] == "fusion" for stage in self.stages):
+                return "degraded" if any(stage.get("fallback") for stage in self.stages) else "completed"
+            return "failed" if any(stage.get("error_type") for stage in self.stages) else "unknown"
         statuses = [stage.get("details", {}).get("status") for stage in self.stages]
         if "failed" in statuses or any(stage.get("error_type") for stage in self.stages):
             return "failed"
@@ -119,3 +125,37 @@ class TraceService:
                          "status": "failed" if any(stage.get("details", {}).get("status") == "failed"
                                                    for stage in stages) else stages[-1].get("details", {}).get("status", "unknown")})
         return rows
+
+    @staticmethod
+    def query_timings(trace: TraceRecord) -> list[dict[str, Any]]:
+        """Dense and Sparse run concurrently; durations are not added together."""
+        return [{"stage": stage["stage"], "elapsed_ms": stage.get("elapsed_ms", stage.get("duration_ms")),
+                 "status": "fallback" if stage.get("fallback") else "completed"}
+                for stage in trace.stages
+                if stage["stage"] in {"query_processing", "dense_retrieval", "sparse_retrieval", "fusion", "rerank"}
+                and ("elapsed_ms" in stage or "duration_ms" in stage)]
+
+    @staticmethod
+    def route_results(trace: TraceRecord, name: str) -> list[dict[str, Any]]:
+        stage = next((stage for stage in trace.stages if stage["stage"] == name), {})
+        results = stage.get("results", [])
+        if not isinstance(results, list):
+            return []
+        return [{"rank": rank, "chunk_id": result["chunk_id"], "score": result.get("score"),
+                 "text": result.get("text", ""), "metadata": result.get("metadata", {})}
+                for rank, result in enumerate(results, start=1)
+                if isinstance(result, dict) and isinstance(result.get("chunk_id"), str)]
+
+    @staticmethod
+    def rank_changes(trace: TraceRecord) -> list[dict[str, Any]]:
+        stage = next((stage for stage in trace.stages if stage["stage"] == "rerank"), {})
+        before, after = stage.get("input_ids"), stage.get("output_ids")
+        if (not isinstance(before, list) or not isinstance(after, list) or
+                not all(isinstance(value, str) for value in before + after) or
+                len(set(before)) != len(before) or len(set(after)) != len(after) or set(before) != set(after)):
+            return []
+        old = {key: rank for rank, key in enumerate(before, start=1)}
+        selected = stage.get("selected_ids")
+        return [{"chunk_id": key, "before": old[key], "after": rank, "change": old[key] - rank,
+                 "selected": key in selected if isinstance(selected, list) else None}
+                for rank, key in enumerate(after, start=1)]

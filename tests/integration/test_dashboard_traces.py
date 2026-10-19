@@ -45,6 +45,9 @@ def test_empty_and_refresh_then_select_failed_trace(trace_path):
     app = open_page()
     assert not app.exception and app.info and not trace_path.exists()
     first, second = record(), record("failed")
+    # Windows can assign identical wall-clock timestamps to adjacent snapshots.
+    first["started_at"] = "2026-10-19T10:00:00+00:00"
+    second["started_at"] = "2026-10-19T11:00:00+00:00"
     trace_path.write_text("\n".join(json.dumps(item) for item in (first, record(kind="query"), second)), encoding="utf-8")
     app.button[0].click().run()
     assert not app.exception and not app.error
@@ -72,4 +75,74 @@ def test_unreadable_file_has_generic_error_without_exception_content(trace_path,
     app = open_page()
     assert not app.exception and app.error
     assert "无法读取追踪文件" in app.error[0].value
+    assert "private-api-key" not in str(app.main)
+
+
+def query_record(query, fallback=False):
+    payload = record(kind="query")
+    payload["stages"] = [
+        {"stage": "query_processing", "elapsed_ms": 1, "details": {"query": query}},
+        {"stage": "dense_retrieval", "elapsed_ms": 5,
+         "results": [{"chunk_id": "a", "text": "dense text", "score": 0.9, "metadata": {"page": 1}}]},
+        {"stage": "sparse_retrieval", "elapsed_ms": 3, "fallback": fallback,
+         "error_type": "OSError" if fallback else None,
+         "results": [] if fallback else [{"chunk_id": "b", "text": "sparse text", "score": 0.1}]},
+        {"stage": "fusion", "elapsed_ms": 1},
+        {"stage": "rerank", "elapsed_ms": 2, "input_ids": ["a", "b"], "output_ids": ["b", "a"],
+         "selected_ids": ["b"], "fallback": fallback, "reason": "timeout" if fallback else None},
+    ]
+    if fallback:
+        payload["stages"][-1]["output_ids"] = ["a", "b"]
+    return payload
+
+
+def open_queries():
+    return AppTest.from_file(APP, default_timeout=30).run().switch_page("pages/query_traces.py").run()
+
+
+def test_query_search_select_comparisons_and_rank_changes(trace_path):
+    first, second = query_record("Azure setup"), query_record("Python retrieval")
+    trace_path.write_text("\n".join(json.dumps(item) for item in (first, record(), second)), encoding="utf-8")
+    app = open_queries()
+    assert not app.exception and len(app.dataframe[0].value) == 2
+    app.text_input[0].set_value("AZURE").run()
+    assert not app.exception
+    assert list(app.dataframe[0].value["查询"]) == ["Azure setup"]
+    assert len(app.get("vega_lite_chart")) == 1
+    assert "dense text" in [element.value for element in app.text]
+    assert "sparse text" in [element.value for element in app.text]
+    assert list(app.dataframe[1].value["上升名次"]) == [1, -1]
+    app.text_input[0].set_value("absent").run()
+    assert app.info and not app.dataframe
+    app.text_input[0].set_value("").run()
+    app.selectbox[0].set_value(first["trace_id"]).run()
+    assert "Azure setup" in [element.value for element in app.text]
+
+
+def test_query_degraded_routes_and_legacy_rank_data(trace_path):
+    trace = query_record("degraded", fallback=True)
+    trace_path.write_text(json.dumps(trace), encoding="utf-8")
+    app = open_queries()
+    assert not app.exception and app.warning
+    assert list(app.dataframe[0].value["状态"]) == ["降级"]
+    assert list(app.dataframe[1].value["上升名次"]) == [0, 0]
+    for name in ("input_ids", "output_ids", "selected_ids"):
+        trace["stages"][-1].pop(name)
+    trace_path.write_text(json.dumps(trace), encoding="utf-8")
+    app.button[0].click().run()
+    assert not app.exception and len(app.dataframe) == 1
+    assert any("排名快照" in element.value for element in app.info)
+
+
+def test_query_empty_partial_and_permission_error(trace_path, monkeypatch):
+    app = open_queries()
+    assert not app.exception and app.info and not trace_path.exists()
+    trace_path.write_text(json.dumps(query_record("hello")) + '\n{"trace_id":', encoding="utf-8")
+    app.button[0].click().run()
+    assert app.warning and not app.exception and len(app.dataframe[0].value) == 1
+    def fail(*args, **kwargs):
+        raise PermissionError("private-api-key")
+    monkeypatch.setattr(TraceService, "load_traces", fail)
+    app.run()
+    assert not app.exception and app.error
     assert "private-api-key" not in str(app.main)
