@@ -17,6 +17,7 @@ from streamlit.testing.v1 import AppTest
 
 from core import Chunk, Document
 from core.settings import Settings
+from core.query_engine import DenseRetriever, SparseRetriever, HybridSearch, QueryProcessor, Fusion
 from ingestion import IngestionPipeline, IngestionPipelineError
 from ingestion.document_manager import DocumentManager
 from ingestion.chunking import DocumentChunker
@@ -26,6 +27,8 @@ from ingestion.transform import BaseTransform
 from libs.embedding.base_embedding import BaseEmbedding
 from libs.loader import BaseLoader, PdfLoader, SQLiteIntegrityChecker
 from libs.vector_store.chroma_store import ChromaStore
+from libs.evaluator.custom_evaluator import CustomEvaluator
+from observability.evaluation.eval_runner import EvalRunner
 
 
 FIXTURE_DIR = Path(__file__).parents[1] / "fixtures" / "sample_documents"
@@ -106,6 +109,31 @@ def make_settings(tmp_path: Path) -> Settings:
         observability={"log_level": "INFO", "trace_file": str(tmp_path / "logs/traces.jsonl")},
         ingestion={"batch_size": 2},
     )
+
+
+@pytest.mark.integration
+def test_bundled_golden_set_evaluates_real_ingested_pdfs(tmp_path: Path) -> None:
+    settings = make_settings(tmp_path)
+    checker = SQLiteIntegrityChecker(tmp_path / "history.db")
+    store = ChromaStore(settings.vector_store)
+    bm25 = BM25Indexer(tmp_path / "bm25")
+    images = ImageStorage(tmp_path / "images", tmp_path / "images.db")
+    embedding = FakeEmbedding()
+    pipeline = IngestionPipeline(
+        settings, integrity_checker=checker, loader=PdfLoader(image_root=tmp_path / "extracted"),
+        chunker=DocumentChunker(settings),
+        batch_processor=BatchProcessor(settings, dense_encoder=DenseEncoder(settings, embedding=embedding),
+                                       sparse_encoder=SparseEncoder()),
+        vector_upserter=VectorUpserter(settings, store=store), bm25_indexer=bm25, image_storage=images)
+    pipeline.run(SIMPLE_PDF)
+    pipeline.run(IMAGE_PDF)
+    search = HybridSearch(settings, QueryProcessor(),
+                          DenseRetriever(settings, embedding_client=embedding, vector_store=store),
+                          SparseRetriever(settings, bm25_indexer=bm25, vector_store=store), Fusion(settings))
+    report = EvalRunner(settings, search, CustomEvaluator()).run(FIXTURE_DIR.parent / "golden_test_set.json")
+    assert report.hit_rate == 1. and 0 < report.mrr <= 1.
+    assert len(report.results) == 2
+    assert all(row["retrieved_ids"] for row in report.results)
 
 
 @pytest.mark.integration

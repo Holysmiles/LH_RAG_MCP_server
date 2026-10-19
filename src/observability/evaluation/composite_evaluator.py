@@ -27,11 +27,21 @@ class CompositeEvaluator(BaseEvaluator):
 
     def evaluate(self, query: str, retrieved_ids: Sequence[str], golden_ids: Sequence[str],
                  trace=None) -> dict[str, float]:
+        return self._run("evaluate", query, retrieved_ids, golden_ids, trace)
+
+    def evaluate_sample(self, query, retrieved_ids, golden_ids, trace=None, *,
+                        answer=None, contexts=None, reference=None) -> dict[str, float]:
+        return self._run("evaluate_sample", query, retrieved_ids, golden_ids, trace,
+                         answer=answer, contexts=contexts, reference=reference)
+
+    def _run(self, method, query, retrieved_ids, golden_ids, trace, **sample):
         if isinstance(retrieved_ids, (str, bytes)) or isinstance(golden_ids, (str, bytes)):
             raise ValueError("retrieved_ids and golden_ids must be sequences of IDs")
         retrieved, golden = list(retrieved_ids), list(golden_ids)
         with ThreadPoolExecutor(max_workers=len(self.evaluators), thread_name_prefix="rag-eval") as pool:
-            futures = [pool.submit(evaluator.evaluate, query, list(retrieved), list(golden), trace=trace)
+            futures = [pool.submit(getattr(evaluator, method), query, list(retrieved), list(golden), trace=trace,
+                                   **{key: list(value) if key == "contexts" and value is not None else value
+                                      for key, value in sample.items()})
                        for evaluator in self.evaluators]
             results = [future.result() for future in futures]
         merged = {}

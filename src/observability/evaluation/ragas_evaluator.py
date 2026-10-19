@@ -93,3 +93,8 @@ class RagasEvaluator(BaseEvaluator):
                 raise ValueError(f"Ragas returned an invalid or undefined score for {name}")
             scores[name] = float(value)
         return scores
+
+    def evaluate_sample(self, query, retrieved_ids, golden_ids, trace=None, *,
+                        answer=None, contexts=None, reference=None) -> dict[str, float]:
+        return self.evaluate(query, retrieved_ids, golden_ids, trace, answer=answer,
+                             contexts=contexts, reference=reference)

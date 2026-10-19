@@ -1,0 +1,15 @@
+{
+  "description": "Ingest simple.pdf and with_images.pdf from tests/fixtures/sample_documents first. Source labels remain valid when chunk IDs change. Relevance matches either an expected Chunk ID or an expected source.",
+  "test_cases": [
+    {
+      "query": "Retrieval augmented generation",
+      "expected_chunk_ids": [],
+      "expected_sources": ["simple.pdf"]
+    },
+    {
+      "query": "Text before the embedded image",
+      "expected_chunk_ids": [],
+      "expected_sources": ["with_images.pdf"]
+    }
+  ]
+}

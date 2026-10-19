@@ -17,6 +17,11 @@ class BaseEvaluator(ABC):
     
     """
 
+    def evaluate_sample(self, query, retrieved_ids, golden_ids, trace=None, *,
+                        answer=None, contexts=None, reference=None) -> dict[str, float]:
+        """Evaluate richer samples; ID-only backends keep their existing contract."""
+        return self.evaluate(query, retrieved_ids, golden_ids, trace=trace)
+
     @abstractmethod
     def evaluate(
         self,

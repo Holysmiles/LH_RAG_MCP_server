@@ -86,6 +86,27 @@ def run_cli(tmp_path, *args):
                           env=env, capture_output=True, text=True, encoding="utf-8", timeout=45)
 
 
+def test_evaluation_cli_runs_real_retrieval_and_saves_report(tmp_path, cli_data):
+    path, config, calls = cli_data
+    golden = tmp_path / "golden.json"
+    golden.write_text(json.dumps({"test_cases": [
+        {"query": "Azure setup", "collection": "alpha", "expected_chunk_ids": ["a", "b"]},
+        {"query": "Azure setup", "collection": "beta", "expected_sources": ["c.pdf"]},
+    ]}), encoding="utf-8")
+    output = tmp_path / "reports/evaluation.json"
+    result = subprocess.run([sys.executable, str(PROJECT_ROOT / "scripts/evaluate.py"),
+        "--settings", str(path), "--test-set", str(golden), "--backend", "custom", "--top-k", "2",
+        "--output", str(output)], cwd=tmp_path, env=dict(os.environ, PYTHONIOENCODING="utf-8"),
+        capture_output=True, text=True, encoding="utf-8", timeout=60)
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout)
+    assert json.loads(output.read_text(encoding="utf-8")) == report
+    assert report["metrics"] == {"hit_rate": 1., "mrr": 1.}
+    assert len(report["results"]) == 2
+    assert report["results"][1]["retrieved_ids"] == ["c"]
+    assert not any(path.endswith("/chat/completions") for path, _ in calls)
+
+
 def test_cli_collection_top_k_verbose_and_actual_llm_reranking(tmp_path, cli_data, monkeypatch):
     path, config, calls = cli_data
     result = run_cli(tmp_path, "--settings", str(path), "--query", "Azure", "--collection", "alpha", "--top-k", "1", "--verbose")
