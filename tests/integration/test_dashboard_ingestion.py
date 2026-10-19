@@ -167,3 +167,15 @@ def test_existing_upload_is_never_overwritten(context):
     app.button[0].click().run()
     assert not app.exception and app.error
     assert source.read_bytes() == b"existing edited source"
+
+
+def test_real_upload_produces_browsable_ingestion_trace(context):
+    app = upload(open_page())
+    assert not app.exception and app.success
+    app.switch_page("pages/ingestion_traces.py").run()
+    assert not app.exception and not app.error
+    assert len(app.dataframe[0].value) == 1
+    assert list(app.dataframe[0].value["状态"]) == ["成功"]
+    assert len(app.get("vega_lite_chart")) == 1
+    stages = [expander.label.split(". ", 1)[-1] for expander in app.expander]
+    assert {"load", "split", "transform", "embed", "upsert"} <= set(stages)

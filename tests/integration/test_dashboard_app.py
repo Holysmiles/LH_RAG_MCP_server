@@ -32,6 +32,7 @@ def dashboard_config(tmp_path, monkeypatch):
     config = yaml.safe_load((ROOT / "config/settings.yaml").read_text(encoding="utf-8"))
     config["llm"]["api_key"] = "dashboard-private-key"
     config["vector_store"]["persist_directory"] = str(tmp_path / "chroma")
+    config["observability"]["trace_file"] = str(tmp_path / "traces.jsonl")
     config["ingestion"] = dict(config.get("ingestion", {}), image_root=str(tmp_path / "images"),
                                image_index_db_path=str(tmp_path / "images.db"),
                                integrity_db_path=str(tmp_path / "history.db"))
