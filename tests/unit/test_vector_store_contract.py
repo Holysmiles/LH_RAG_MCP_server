@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence
+from copy import deepcopy
+import json
+import math
 from typing import Any
 
 import pytest
@@ -15,6 +18,7 @@ from libs.vector_store.base_vector_store import (
     VectorSearchResult,
 )
 from libs.vector_store.vector_store_factory import VectorStoreFactory
+from libs.vector_store.chroma_store import ChromaStore
 
 
 class InMemoryVectorStore(BaseVectorStore):
@@ -268,3 +272,92 @@ def test_factory_rejects_builder_with_wrong_return_type() -> None:
             VectorStoreFactory.create(settings)
     finally:
         VectorStoreFactory.unregister("invalid")
+
+
+@pytest.fixture
+def persisted_store(tmp_path, sample_records) -> ChromaStore:
+    store = ChromaStore({"persist_directory": str(tmp_path / "contract-db")})
+    records = deepcopy(sample_records)
+    records.extend([
+        {**deepcopy(records[0]), "id": "chunk-3"},
+        {**deepcopy(records[0]), "id": "chunk-4",
+         "metadata": {"collection": "notes", "source_path": "alpha.pdf"}},
+    ])
+    records[0]["metadata"].update(tags=["中文", "rag"], page=1)
+    store.upsert(records)
+    return store
+
+
+@pytest.mark.unit
+def test_optional_metadata_operations_fail_explicitly_for_unsupported_backend():
+    store = InMemoryVectorStore({})
+    with pytest.raises(NotImplementedError, match="metadata reads"):
+        store.get_by_metadata({"collection": "docs"})
+    with pytest.raises(NotImplementedError, match="metadata deletion"):
+        store.delete_by_metadata({"collection": "docs"})
+
+
+@pytest.mark.unit
+def test_persisted_read_and_query_share_serializable_public_shapes(persisted_store):
+    store: BaseVectorStore = persisted_store
+    records = store.get_by_metadata({"source_path": "alpha.pdf", "collection": "docs"})
+    assert [record["id"] for record in records] == ["chunk-1", "chunk-3"]
+    assert all(set(record) == {"id", "text", "metadata"} for record in records)
+    assert records[0]["metadata"]["tags"] == ["中文", "rag"]
+    results = store.query([1., 0.], top_k=10, filters={"page": 1})
+    assert len(results) == 1
+    assert set(results[0]) == {"chunk_id", "text", "metadata", "score"}
+    assert results[0]["chunk_id"] == records[0]["id"]
+    assert results[0]["metadata"] == records[0]["metadata"]
+    assert type(results[0]["score"]) is float and math.isfinite(results[0]["score"])
+    assert json.loads(json.dumps(results, allow_nan=False)) == results
+    records[0]["metadata"]["tags"].clear()
+    assert store.get_by_ids(["chunk-1"])[0]["metadata"]["tags"] == ["中文", "rag"]
+
+
+@pytest.mark.unit
+def test_metadata_delete_is_scoped_counted_idempotent_and_persisted(persisted_store):
+    store: BaseVectorStore = persisted_store
+    filters = {"source_path": "alpha.pdf", "collection": "docs"}
+    before = deepcopy(filters)
+    assert store.delete_by_metadata({"collection": "absent"}) == 0
+    deleted = store.delete_by_metadata(filters)
+    assert type(deleted) is int and deleted == 2
+    assert filters == before
+    assert store.delete_by_metadata(filters) == 0
+    reopened: BaseVectorStore = ChromaStore(persisted_store.config)
+    assert [record["id"] for record in reopened.get_by_ids(
+        ["chunk-4", "chunk-1", "chunk-3", "chunk-2"])] == ["chunk-4", "chunk-2"]
+    assert reopened.get_by_metadata(filters) == []
+    assert {row["chunk_id"] for row in reopened.query([1., 0.], top_k=10)} == {"chunk-2", "chunk-4"}
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("filters", [
+    None, {}, [], "collection", {"": "docs"}, {1: "docs"},
+    {"__rag_metadata_json": "{}"}, {"collection": {"$ne": "docs"}},
+    {"collection": None}, {"page": float("nan")}, {"page": float("inf")},
+    {"tags": ["rag"]},
+])
+def test_invalid_metadata_filters_cannot_delete_any_records(persisted_store, filters):
+    before = persisted_store.list_records()
+    with pytest.raises(ValueError):
+        persisted_store.delete_by_metadata(filters)
+    assert persisted_store.list_records() == before
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("ids", [
+    "chunk-1", b"chunk-1", None, [""], ["  "], [42],
+    ["chunk-1", " chunk-1 "],
+])
+def test_persisted_id_reads_reject_invalid_or_duplicate_ids(persisted_store, ids):
+    with pytest.raises(ValueError):
+        persisted_store.get_by_ids(ids)
+
+
+@pytest.mark.unit
+def test_persisted_empty_id_read_is_valid_and_request_order_is_restored(persisted_store):
+    assert persisted_store.get_by_ids(()) == []
+    records = persisted_store.get_by_ids(("chunk-3", "absent", "chunk-1"))
+    assert [row["id"] for row in records] == ["chunk-3", "chunk-1"]

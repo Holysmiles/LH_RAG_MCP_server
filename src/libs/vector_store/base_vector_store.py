@@ -38,6 +38,15 @@ class VectorSearchResult(TypedDict):
 class BaseVectorStore(ABC):
     """Define the minimal contract implemented by vector store backends."""
 
+    def delete_by_metadata(self, filters: Mapping[str, Any]) -> int:
+        """Delete records matching all non-empty equality filters.
+
+        Return the number deleted, including zero for no matches or a repeat
+        call. Empty or invalid filters must fail before any deletion. Providers
+        without this optional capability fail explicitly, like metadata reads.
+        """
+        raise NotImplementedError("This vector store does not support metadata deletion")
+
     def get_by_metadata(
         self, filters: Mapping[str, Any], trace: TraceContext | None = None,
     ) -> list[StoredVectorRecord]:

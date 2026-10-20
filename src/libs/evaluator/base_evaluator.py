@@ -17,9 +17,22 @@ class BaseEvaluator(ABC):
     
     """
 
-    def evaluate_sample(self, query, retrieved_ids, golden_ids, trace=None, *,
-                        answer=None, contexts=None, reference=None) -> dict[str, float]:
-        """Evaluate richer samples; ID-only backends keep their existing contract."""
+    def evaluate_sample(
+        self,
+        query: str,
+        retrieved_ids: Sequence[str],
+        golden_ids: Sequence[str],
+        trace: TraceContext | None = None,
+        *,
+        answer: str | None = None,
+        contexts: Sequence[str] | None = None,
+        reference: str | None = None,
+    ) -> dict[str, float]:
+        """Delegate to ID-only backends, preserving IDs and trace unchanged.
+
+        Semantic evaluators override this method to consume answer, contexts,
+        and reference. Existing retrieval evaluators may ignore those fields.
+        """
         return self.evaluate(query, retrieved_ids, golden_ids, trace=trace)
 
     @abstractmethod

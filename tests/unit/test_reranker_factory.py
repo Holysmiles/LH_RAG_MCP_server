@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence
+from copy import deepcopy
+import json
 from typing import Any
 
 import pytest
 
 from core.settings import Settings
+from core.trace import TraceContext
+from core.types import RetrievalResult
+from libs.llm.base_llm import BaseLLM
 from libs.reranker.base_reranker import BaseReranker, CandidateT
+from libs.reranker.cross_encoder_reranker import CrossEncoderReranker
+from libs.reranker.llm_reranker import LLMReranker
 from libs.reranker.reranker_factory import NoneReranker, RerankerFactory
 
 
@@ -170,3 +177,83 @@ def test_factory_rejects_builder_with_wrong_return_type() -> None:
             RerankerFactory.create(settings)
     finally:
         RerankerFactory.unregister("invalid")
+
+
+class ReverseLLM(BaseLLM):
+    def chat(self, messages):
+        data = json.loads(messages[-1]["content"])
+        return json.dumps({"ranked_ids": [item["chunk_id"] for item in reversed(data["candidates"])]})
+
+
+class AscendingScorer:
+    def predict(self, sentences, **kwargs):
+        return list(range(len(sentences)))
+
+
+@pytest.fixture(params=["none", "llm", "cross_encoder"])
+def builtin_reranker(request):
+    if request.param == "none":
+        return RerankerFactory.create(Settings(rerank={"provider": "none"})), False
+    if request.param == "llm":
+        return LLMReranker({}, llm=ReverseLLM(), prompt_text="Rank passages."), True
+    return CrossEncoderReranker({}, scorer=AscendingScorer()), True
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("as_objects", [False, True], ids=["mappings", "retrieval-results"])
+def test_builtin_rerankers_share_sequence_and_object_preservation_contract(builtin_reranker, as_objects):
+    reranker, reverses = builtin_reranker
+    items = [
+        {"chunk_id": f"chunk-{index}", "text": f"passage {index}", "score": .9 - index / 10,
+         "metadata": {"source_path": "guide.pdf", "page": index + 1, "tags": ["rag"]}}
+        for index in range(3)
+    ]
+    if as_objects:
+        items = [RetrievalResult(**item) for item in items]
+    original = tuple(items)
+    snapshot = deepcopy(original)
+    ranked = reranker.rerank("query", original, trace=TraceContext())
+    expected = list(reversed(original)) if reverses else list(original)
+    assert isinstance(ranked, list) and len(ranked) == len(original)
+    assert all(actual is expected_item for actual, expected_item in zip(ranked, expected, strict=True))
+    assert original == snapshot
+    ranked.clear()
+    assert original == snapshot
+
+
+@pytest.mark.unit
+def test_builtin_rerankers_accept_empty_and_singleton_tuples(builtin_reranker):
+    reranker, _ = builtin_reranker
+    assert reranker.rerank("query", (), trace=TraceContext()) == []
+    candidate = {"chunk_id": "only", "text": "only passage", "score": .1, "metadata": {}}
+    ranked = reranker.rerank("query", (candidate,))
+    assert ranked == [candidate] and ranked[0] is candidate
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("provider", ["", " \t"])
+def test_factory_rejects_blank_provider_names(provider):
+    with pytest.raises(ValueError, match=r"rerank\.provider"):
+        RerankerFactory.create(Settings(rerank={"provider": provider}))
+
+
+@pytest.mark.unit
+def test_registration_replacement_and_snapshot_do_not_corrupt_registry(monkeypatch):
+    monkeypatch.setattr(RerankerFactory, "_providers", dict(RerankerFactory._providers))
+    RerankerFactory.register(" Contract ", ScoreReranker)
+    RerankerFactory.register("CONTRACT", NoneReranker, replace=True)
+    assert isinstance(RerankerFactory.create(Settings(rerank={"provider": "contract"})), NoneReranker)
+    providers = RerankerFactory.list_providers()
+    assert providers == sorted(set(providers))
+    providers.clear()
+    assert {"none", "llm", "cross_encoder", "contract"} <= set(RerankerFactory.list_providers())
+    RerankerFactory.unregister(" CONTRACT ")
+    RerankerFactory.unregister("contract")
+    assert "contract" not in RerankerFactory.list_providers()
+
+
+@pytest.mark.unit
+def test_registration_rejects_non_callable_builder():
+    with pytest.raises(TypeError, match="callable"):
+        RerankerFactory.register("not-callable", None)
+    assert "not-callable" not in RerankerFactory.list_providers()

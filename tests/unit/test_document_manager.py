@@ -1,11 +1,16 @@
 """Document lifecycle with isolated persisted stores and injected failures."""
 
+from copy import deepcopy
+from dataclasses import asdict
+import json
 from pathlib import Path
 
 import pytest
 
 from core import Chunk
-from ingestion.document_manager import DocumentManager
+from ingestion.document_manager import (
+    CollectionStats, DeleteResult, DocumentDetail, DocumentInfo, DocumentManager,
+)
 from ingestion.embedding import SparseEncoder
 from ingestion.storage import BM25Indexer, ImageStorage
 from libs.loader import SQLiteIntegrityChecker
@@ -173,3 +178,98 @@ def test_empty_missing_and_invalid_requests(manager, tmp_path):
         manager.delete_document("", "alpha")
     with pytest.raises(ValueError):
         manager.delete_document("file.pdf", "")
+
+
+def test_document_outputs_have_stable_serializable_shapes_and_detached_payloads(manager, tmp_path):
+    source, doc_id = seed(manager, tmp_path)
+    document = manager.list_documents()[0]
+    assert isinstance(document, DocumentInfo)
+    assert asdict(document) == {
+        "document_id": doc_id, "source_path": source, "collection": "alpha",
+        "chunk_count": 2, "image_count": 1, "file_hash": doc_id,
+        "ingested_at": document.ingested_at,
+    }
+    assert isinstance(document.ingested_at, str) and document.ingested_at
+    detail = manager.get_document_detail(doc_id, " alpha ")
+    assert isinstance(detail, DocumentDetail) and detail.document == document
+    assert all(set(row) == {"id", "text", "metadata"} for row in detail.chunks)
+    assert all(set(row) == {"image_id", "file_path", "collection", "doc_hash", "page_num", "created_at", "exists"}
+               for row in detail.images)
+    assert json.loads(json.dumps(asdict(detail), allow_nan=False)) == asdict(detail)
+    snapshot = deepcopy(detail)
+    detail.chunks[0]["metadata"]["collection"] = "changed"
+    detail.images[0]["collection"] = "changed"
+    assert manager.get_document_detail(doc_id, "alpha") == snapshot
+    stats = manager.get_collection_stats("alpha")
+    assert isinstance(stats, CollectionStats)
+    assert asdict(stats) == {"document_count": 1, "chunk_count": 2, "image_count": 1, "collection_count": 1}
+
+
+def test_detail_selects_exact_document_id_when_source_and_collection_are_shared(manager, tmp_path):
+    source, first_id = seed(manager, tmp_path)
+    _, second_id = seed(manager, tmp_path, "b", source=source)
+    for doc_id, expected_prefix in ((first_id, "alpha-a-"), (second_id, "alpha-b-")):
+        detail = manager.get_document_detail(doc_id, "alpha")
+        assert len(detail.chunks) == 2 and len(detail.images) == 1
+        assert all(row["id"].startswith(expected_prefix) for row in detail.chunks)
+        assert all(row["metadata"]["document_id"] == doc_id for row in detail.chunks)
+        assert detail.images[0]["doc_hash"] == doc_id
+
+
+def test_missing_document_delete_returns_complete_zero_counts_and_preserves_existing_data(manager, tmp_path):
+    seed(manager, tmp_path)
+    before = manager.get_collection_stats()
+    result = manager.delete_document(tmp_path / "nested" / ".." / "absent.pdf", " alpha ")
+    assert isinstance(result, DeleteResult)
+    assert asdict(result) == {
+        "source_path": str((tmp_path / "absent.pdf").resolve()), "collection": "alpha", "success": True,
+        "deleted_chunks": 0, "deleted_sparse_chunks": 0, "deleted_images": 0,
+        "removed_integrity_records": 0, "errors": {},
+    }
+    assert manager.get_collection_stats() == before
+    assert asdict(manager.get_collection_stats("missing")) == {
+        "document_count": 0, "chunk_count": 0, "image_count": 0, "collection_count": 0,
+    }
+
+
+def test_read_failure_has_structured_error_and_deletion_can_be_retried(manager, tmp_path, monkeypatch):
+    source, doc_id = seed(manager, tmp_path)
+    def fail():
+        raise OSError("private storage details")
+    with monkeypatch.context() as patch:
+        patch.setattr(manager.chroma_store, "list_records", fail)
+        result = manager.delete_document(source, "alpha")
+    assert not result.success and result.errors == {"read": "OSError"}
+    assert (result.deleted_chunks, result.deleted_sparse_chunks, result.deleted_images,
+            result.removed_integrity_records) == (0, 0, 0, 0)
+    assert manager.get_document_detail(doc_id).document.chunk_count == 2
+    assert manager.bm25_indexer.document_count == 2
+    assert manager.file_integrity.should_skip(doc_id)
+    assert manager.delete_document(source, "alpha").success
+    assert manager.list_documents() == []
+
+
+@pytest.mark.parametrize("doc_id", [None, 42, " \t"])
+def test_detail_rejects_invalid_document_identifiers(manager, doc_id):
+    with pytest.raises(ValueError, match="doc_id"):
+        manager.get_document_detail(doc_id)
+
+
+@pytest.mark.parametrize("collection", [42, " \t"])
+@pytest.mark.parametrize("method", ["list_documents", "get_collection_stats", "get_document_detail"])
+def test_read_methods_reject_invalid_collection_filters(manager, collection, method):
+    args = ("absent", collection) if method == "get_document_detail" else (collection,)
+    with pytest.raises(ValueError, match="collection"):
+        getattr(manager, method)(*args)
+
+
+@pytest.mark.parametrize(("source", "collection"), [
+    (None, "alpha"), (42, "alpha"), (" \t", "alpha"),
+    ("file.pdf", None), ("file.pdf", 42), ("file.pdf", " \t"),
+])
+def test_delete_rejects_invalid_requests_without_modifying_stores(manager, tmp_path, source, collection):
+    seed(manager, tmp_path)
+    before = manager.get_collection_stats()
+    with pytest.raises(ValueError, match="source_path|collection"):
+        manager.delete_document(source, collection)
+    assert manager.get_collection_stats() == before
