@@ -9,6 +9,11 @@
 - [项目概述](#-项目概述)
 - [分支说明](#-分支说明)
 - [快速开始](#-快速开始)
+- [配置说明](#配置说明)
+- [MCP 配置示例](#mcp-配置示例)
+- [Dashboard 使用指南](#dashboard-使用指南)
+- [评估与黄金测试集](#评估与黄金测试集)
+- [运行测试](#运行测试)
 - [谁适合用这个项目 & 怎么用](#-谁适合用这个项目--怎么用)
 - [简历参考](#-简历参考)
 - [常见问题](#-常见问题)
@@ -20,7 +25,7 @@
 
 ### 这个项目是什么
 
-本项目将 RAG 面试中最常见的核心环节——**检索（Hybrid Search + Rerank）**、**多模态视觉处理（Image Captioning）**、**RAG 评估（Ragas + Custom）**、**生成（LLM Response）**——以及当下热门的应用协议 **MCP（Model Context Protocol）** 串联为一个完整的、可运行的工程项目。
+本项目实现 PDF 摄取、混合检索与重排、多模态图片关联、质量评估和 MCP 工具服务。`query_knowledge_hub` 返回检索片段与 citations；连接的 Copilot / Claude 可以据此组织答案。服务端还可调用配置的 LLM 执行可选的清洗、元数据提取、图片描述和重排。
 
 **项目的一大亮点是极易适配到你自己的业务中**。得益于全链路可插拔架构，你可以快速将它结合到自己已有的项目里，无论你的背景和需求如何，都能找到适合自己的使用方式。具体的使用策略会在后文 [谁适合用这个项目 & 怎么用](#-谁适合用这个项目--怎么用) 中详细展开。
 
@@ -45,7 +50,7 @@
 | **Dashboard** | Streamlit 六页面管理平台 | 系统总览 / 数据浏览 / Ingestion 管理 / 摄取追踪 / 查询追踪 / 评估面板 |
 | **Evaluation** | Ragas + Custom 评估体系 | 支持 golden test set 回归测试，拒绝"凭感觉"调优 |
 | **Observability** | 全链路白盒化追踪 | Ingestion 与 Query 两条链路的每一个中间状态透明可见 |
-| **Skill 驱动全流程** | 从编写到测试、打包、配置一键完成 | auto-coder / qa-tester / package / setup 等 Skill 覆盖完整开发生命周期（笔记中每个 Skill 的使用和设计思路均有讲解，请参考配套视频） |
+| **Skill 驱动开发** | 按规格继续开发和测试 | 当前仓库提供 auto-coder、qa-tester、resume-writer 等技能，运行项目无需先安装或调用 Setup Skill。 |
 
 ### 技术亮点
 
@@ -61,7 +66,7 @@
 
 **🧪 三层测试体系**：Unit / Integration / E2E 分层测试，覆盖独立模块逻辑、模块间交互、完整链路（MCP Client / Dashboard）。
 
-**🤖 Skill 驱动全流程**：内置 auto-coder（自动编码）、qa-tester（自动测试）、package（清理打包）、setup（一键配置）等 Agent Skill，覆盖从代码编写到测试、打包、部署的完整开发生命周期。每个 Skill 的使用方法和设计思路在笔记的项目部分均有讲解视频，可参考学习。
+**🤖 Skill 驱动开发**：可通过仓库中的 auto-coder、qa-tester 和 resume-writer 技能继续规格开发、执行 QA 或整理项目经历。可用技能以当前 checkout 的 `.agents/skills/` 为准。
 
 > 📖 详细架构设计、模块说明和任务排期请参阅 [DEV_SPEC.md](DEV_SPEC.md)
 
@@ -73,12 +78,12 @@
 
 ### `main` — 最干净的完整代码
 
-- 始终只有 **1 个 commit**，包含项目的最新完整代码
+- 当前代码与开发历史以 checkout 的 `git log` 和 `DEV_SPEC.md` 为准
 - **适合人群**：
   - 想要快速体验项目完整功能的同学
   - 时间紧迫，想要快速拿到一个项目去面试、跳过中间开发过程的同学
   - 想要直接在该项目基础上做二次扩展的同学
-- **使用方式**：克隆后直接运行 Setup Skill 即可体验
+- **使用方式**：克隆后按下方快速开始安装和运行
 
 ### `dev` — 保留完整开发记录
 
@@ -101,39 +106,210 @@
 
 ## 🚀 快速开始
 
-项目统一使用根目录 `environment.yml` 定义的 Conda 环境，环境名称为 `rag`，Python 版本为 3.11。首次使用可运行 `conda env create -f environment.yml`，之后运行 `conda activate rag` 进入环境。
+需要 **Python 3.11**。以下命令以 Windows PowerShell 为例，均从仓库根目录执行。模型调用需要可用的 Embedding 服务；默认配置使用 OpenAI。依赖和模型首次下载时间取决于网络，准备完成后可按以下步骤跑通样例。
 
 ### 1. 克隆项目
 
-```bash
-git clone <repo-url>
-cd Modular-RAG-MCP-Server
+```powershell
+git clone <你的仓库地址> rag-project
+cd rag-project
+conda env create -f environment.yml
+conda activate rag
+python -m pip install -e ".[dev]"
+python -c "import sys; print(sys.executable)"
 ```
 
-### 2. 一键配置（Setup Skill）
+已有 `rag` 环境时，跳过创建步骤。`environment.yml` 只创建 Python / pip 环境，业务依赖由安装命令读取 `pyproject.toml`。记录最后一条命令打印的 Python 绝对路径，MCP 客户端将用到它。
 
-本项目提供了 **Setup Skill** 一键完成所有环境配置，包括：Provider 选择 → API Key 配置 → 依赖安装 → 配置文件生成 → Dashboard 启动。
-
-在 VS Code 中打开项目，通过 Copilot / Claude 对话框输入：
-
-```
-setup
-```
-
-Agent 会自动引导你完成全部配置流程。
-
-> 💡 如果不熟悉 Skill 的使用方式，请观看配套笔记中的 **Setup Skill 使用讲解视频**。
-
-### 3. 验证 clean-start 工程骨架
-
-完成开发任务 A1 后，可在 `rag` 环境中安装当前项目并验证最小入口：
+### 2. 配置 API Key
 
 ```powershell
-conda activate rag
-python -m pip install -e .
-python -c "import mcp_server; import core; import ingestion; import libs; import observability"
-python main.py
+$env:OPENAI_API_KEY = "你的真实 API Key"
 ```
+
+默认 `config/settings.yaml` 的 `llm.api_key` 和 `embedding.api_key` 使用 `${OPENAI_API_KEY}`。程序读取进程环境变量；**不会自动加载 `.env` 文件**。以上变量仅对当前 PowerShell 及其子进程生效，MCP 桌面客户端的配置见后文。
+
+默认关闭 Vision、LLM 清洗、LLM 元数据增强和重排，因此首次摄取和查询主要调用 Embedding 服务。使用兼容服务时，请设置相应模块的 `provider`、`model` 和 `base_url`，不要仅更换模型名称。
+
+### 3. 首次摄取和查询
+
+```powershell
+New-Item -ItemType Directory -Force data/documents/demo | Out-Null
+Copy-Item tests/fixtures/sample_documents/*.pdf data/documents/demo/
+python scripts/ingest.py --path data/documents/demo --collection demo
+python scripts/query.py --query "Retrieval augmented generation" --collection demo --top-k 3 --verbose
+```
+
+摄取输出 JSON 记录，包含 `status`、`document_id`、`chunk_count` 等字段；查询输出片段、来源、分数和可用页码。`--verbose` 显示两路召回、融合和重排信息。相同内容默认跳过，重新处理可加 `--force`；`--no-rerank` 可在单次查询中跳过重排。
+
+`--collection` 是索引中的逻辑集合。`list_collections` 列出 `ingestion.documents_path` 下的直接子目录，所以样例先复制到 `data/documents/demo`。直接摄取其他路径也可检索，但不会自动把原文件复制到该目录。
+
+### 4. 启动 Dashboard 并验证评估
+
+```powershell
+python scripts/start_dashboard.py
+```
+
+在浏览器打开 [http://127.0.0.1:8501](http://127.0.0.1:8501)。启动脚本不会自动弹出浏览器，使用 `Ctrl+C` 停止。
+
+```powershell
+python scripts/evaluate.py --backend custom --collection demo --top-k 3 --output logs/evaluation.json
+python -m pytest -q tests/unit/test_custom_evaluator.py
+```
+
+上述黄金集对应刚摄取的两份样例 PDF。评估命令输出平均 `hit_rate`、`mrr` 和逐查询结果，并将完整报告保存到指定文件。命中率是至少命中一个相关片段的查询比例，不等于召回率 Recall。
+
+各脚本都支持 `--settings path/to/settings.yaml`。相对数据路径以**进程工作目录**为基准，建议所有入口使用同一仓库根目录。MCP 服务入口为 `python main.py --settings config/settings.yaml`；手动运行时它等待客户端从 stdin 发送协议消息，等待不代表卡死。
+
+## 配置说明
+
+配置文件为 [config/settings.yaml](config/settings.yaml)，实现细节见 [DEV_SPEC.md](DEV_SPEC.md)。`${NAME}` 只替换已存在的环境变量；未设置的变量会保留占位符，不能作为有效凭据使用。`llm`、`embedding`、`splitter`、`vector_store`、`retrieval`、`rerank`、`evaluation`、`observability` 是必需配置节。
+
+| 配置节 | 主要字段与作用 |
+|---|---|
+| `project` | 项目名称与环境标识。 |
+| `llm` | `provider` 支持 `openai` / `azure` / `deepseek` / `ollama`；设置 `model`，按后端设置 `api_key`、`base_url`；Azure 使用 `azure_endpoint`、`deployment_name`、`api_version`。 |
+| `embedding` | `provider` 支持 `openai` / `azure` / `ollama`；`model` 和服务地址须与已有向量一致。更换模型或维度后使用新索引目录重新摄取。 |
+| `vision_llm` | `enabled` 默认关闭；当前内置 Azure Vision，使用 `azure_endpoint`、`deployment_name`、`api_version`、`api_key` 和 `max_image_size`。 |
+| `splitter` | 当前内置 `recursive`；`chunk_size`、`chunk_overlap` 控制文本切分。 |
+| `vector_store` | 当前内置 `chroma`；`persist_directory` 是数据库目录，`collection_name` 是物理集合。逻辑集合由摄取参数写入 metadata。 |
+| `retrieval` | `dense_top_k` / `sparse_top_k` 控制召回预算，`fusion_top_k` 控制默认融合条数，`rrf_k` 控制 RRF 排名融合。 |
+| `rerank` | `enabled`、`provider: none / llm / cross_encoder`、`timeout_seconds`；启用模型重排时可设置 `top_m`，`llm` 可设置 `prompt_path`，`cross_encoder` 可设置 `model`。失败时回退融合顺序。 |
+| `ingestion` | `batch_size`、`documents_path`；可覆盖 `bm25_path`、`integrity_db_path`、`image_root`、`image_index_db_path`。`chunk_refiner.use_llm` 和 `metadata_enricher.use_llm` 默认关闭。 |
+| `evaluation` | `provider: custom / ragas`，或 `backends: [ragas, custom]` 组合；`top_k`、`collection`、`test_sets` 用于评估。显式 CLI / 面板运行可在 `enabled: false` 时手动触发。 |
+| `observability` | `log_level`、`trace_enabled`、`trace_file`；追踪默认保存到 `logs/traces.jsonl`。 |
+| `dashboard` | `enabled`、`port`；启动脚本绑定 `127.0.0.1`，`--port` 可覆盖端口。 |
+
+默认数据位置：Chroma 为 `data/db/chroma`，BM25 为 `data/db/bm25`，去重库为 `data/db/ingestion_history.db`，图片为 `data/images`，图片索引为 `data/db/image_index.db`。多入口必须指向同一组存储。配置路径可以是绝对路径。
+
+## MCP 配置示例
+
+先完成首次摄取，再连接客户端。以下是可编辑示例：将 `C:/path/to/...` 换成本机真实路径；JSON 路径可使用 `/`。MCP 服务使用 **stdio**，stdout 专用于协议，日志写入 stderr。
+
+### GitHub Copilot / VS Code
+
+在工作区 `.vscode/mcp.json` 使用 VS Code 的 `servers` 格式：
+
+```json
+{
+  "servers": {
+    "rag-knowledge-hub": {
+      "type": "stdio",
+      "command": "C:/path/to/miniconda3/envs/rag/python.exe",
+      "args": ["${workspaceFolder}/main.py", "--settings", "${workspaceFolder}/config/settings.yaml"],
+      "cwd": "${workspaceFolder}",
+      "env": {"OPENAI_API_KEY": "${env:OPENAI_API_KEY}"}
+    }
+  }
+}
+```
+
+从已设置环境变量的终端启动 VS Code，或通过客户端支持的凭据配置提供 Key。在配置编辑器启动该服务后，进入支持工具调用的聊天模式，确认可见三个工具。当前 Copilot harness 也支持工作区根目录 `.mcp.json`，其顶层是 `mcpServers`，不是 `servers`；变量和工作目录能力不同，迁移时按 [VS Code 官方配置参考](https://code.visualstudio.com/docs/agents/reference/mcp-configuration) 调整。
+
+### Claude Desktop
+
+在 Claude Desktop 的开发者设置中打开 `claude_desktop_config.json`。Windows 常见位置为 `%APPDATA%/Claude/claude_desktop_config.json`。该示例先设置子进程工作目录，再运行同一个服务入口：
+
+```json
+{
+  "mcpServers": {
+    "rag-knowledge-hub": {
+      "command": "C:/path/to/miniconda3/envs/rag/python.exe",
+      "args": [
+        "-c",
+        "import os, runpy, sys; os.chdir(r'C:/path/to/rag-project'); sys.argv = ['main.py', '--settings', 'config/settings.yaml']; runpy.run_path('main.py', run_name='__main__')"
+      ],
+      "env": {"OPENAI_API_KEY": "YOUR_LOCAL_OPENAI_API_KEY"}
+    }
+  }
+}
+```
+
+将占位 Key 替换为本机凭据，配置完成后完全退出并重启客户端。图形客户端启动的服务不一定继承终端变量；可参考 [MCP Python SDK 的客户端配置说明](https://py.sdk.modelcontextprotocol.io/get-started/real-host/)。不要把已填入凭据的个人配置提交到 Git。
+
+| 工具 | 参数与返回 |
+|---|---|
+| `query_knowledge_hub` | 必填 `query`，可选 `collection`、正整数 `top_k`；返回正文及结构化 `citations`，包含 `index`、`source`、`page`、`chunk_id`、`score`。页码不可用时为 `null`。 |
+| `list_collections` | 无参数；返回源文档目录下的集合名称，目录存在不代表摄取成功。 |
+| `get_document_summary` | 必填摄取返回的 `doc_id`（即 `document_id`）；读取已保存的摘要元数据。缺失文档返回结构化错误。 |
+
+可请求客户端“在 demo 集合查询 Retrieval augmented generation，并列出来源”。不要把 Chunk ID 当成 `get_document_summary` 的文档 ID。
+
+## Dashboard 使用指南
+
+运行 `python scripts/start_dashboard.py`，或指定 `python scripts/start_dashboard.py --settings config/settings.yaml --port 8502`。侧栏可切换六个页面：
+
+| 页面 | 使用方式 |
+|---|---|
+| 系统总览 | 查看已选择的组件与文档、Chunk、逻辑集合数量。 |
+| 数据浏览器 | 按集合筛选文档，选择文档查看 Chunk 正文、metadata 和托管图片。 |
+| 摄取管理 | 上传 PDF，选择或新建集合，查看实时阶段进度；可强制重摄取和删除文档索引。删除保留源 PDF，清理该文档的关联索引与托管图片。 |
+| 摄取追踪 | 刷新 JSONL 历史，查看成功、跳过、失败状态及主阶段耗时。 |
+| 查询追踪 | 搜索历史查询，比较 Dense / Sparse 结果及重排前后排名；旧日志可能没有排名快照。 |
+| 评估面板 | 选择按配置 / Custom / Ragas / 组合后端和黄金集，运行后查看平均指标、逐查询详情、会话历史并下载 JSON。历史保存在当前会话。 |
+
+同一文档的摄取与删除应依次执行。网页只在点击运行按钮时触发任务；切换控件不会自动重跑评估。Dense 与 Sparse 并行执行，阶段耗时不能直接相加得到总耗时。
+
+以下截图来自实际 Dashboard，使用仓库样例 PDF 和本地模拟 Embedding 服务生成演示数据；数值不代表线上模型的语义质量。
+
+![Dashboard 系统总览示例](docs/images/dashboard-overview.jpg)
+
+![Dashboard 评估报告示例](docs/images/dashboard-evaluation.jpg)
+
+## 评估与黄金测试集
+
+默认 [golden_test_set.json](tests/fixtures/golden_test_set.json) 包含 6 条查询，对应 `simple.pdf` 和 `with_images.pdf`。每条样例至少提供 `query`，以及非空的 `expected_chunk_ids` 或 `expected_sources`。候选的 ID 或来源匹配任意预期标签即视为相关；仅给出文件名时匹配 basename，给出目录时要求路径匹配。
+
+```json
+{
+  "test_cases": [
+    {"query": "Retrieval augmented generation", "expected_sources": ["simple.pdf"], "collection": "demo"}
+  ]
+}
+```
+
+可通过 `--test-set path/to/golden.json` 选择其他黄金集。面板路径列表来自 `evaluation.test_sets`：
+
+```yaml
+evaluation:
+  provider: custom
+  top_k: 3
+  test_sets:
+    - tests/fixtures/golden_test_set.json
+```
+
+Custom 返回 `hit_rate` 和 `mrr`。Ragas 支持 `faithfulness`、`answer_relevancy`、`context_precision`，默认前两项；待评答案必须放在样例的 `answer` 或 `evaluation.samples` 中，选择 `context_precision` 还需 `reference`。上下文使用实际检索文本，运行器不会生成答案，也不会拿参考答案充当待评答案。
+
+Ragas 的 judge LLM / Embedding 使用 Ragas 默认客户端；程序调用可向 `RagasEvaluator` 注入原生 Ragas / 支持的 LangChain 客户端。项目 `llm` / `embedding` 节不自动转成 judge 客户端。初次体验建议选择 Custom；使用 Ragas 时按其客户端配置提供模型和凭据。
+
+```yaml
+evaluation:
+  backends: [ragas, custom]
+  metrics: [faithfulness, answer_relevancy]
+```
+
+组合后端并行运行，指标重名或任一后端失败时会报错，不返回残缺的成功报告。离线召回回归使用确定性词项哈希向量，检查工程链路与固定阈值，不评判真实 Embedding 模型质量。
+
+## 运行测试
+
+先激活 `rag` 并安装 `.[dev]`。以下命令按测试目录运行；多数测试使用临时数据库、离线模型双和本地 HTTP 服务，不需要真实 API Key：
+
+```powershell
+python -m pytest -q tests/unit
+python -m pytest -q tests/integration
+python -m pytest -q tests/e2e
+python -m pytest -q
+```
+
+只验证关键链路可运行：
+
+```powershell
+python -m pytest -q tests/e2e/test_recall.py
+python -m pytest -q tests/e2e/test_mcp_client.py
+python -m pytest -q tests/e2e/test_dashboard_smoke.py
+```
+
+这些 E2E 测试会实际读写临时存储、启动本机服务或进程。Dashboard 测试使用 Streamlit AppTest，无需手动打开浏览器。需要隔离外部网络的环境应允许测试使用回环地址和临时目录；缓存目录不可写时可加 `-p no:cacheprovider`。
 
 ---
 
@@ -157,7 +333,7 @@ python main.py
 
 如果你现在没有 AI 相关项目、急需一个项目去面试，那么可以：
 
-1. **直接使用本项目**，克隆 `main` 分支，用 Setup Skill 跑起来
+1. **直接使用本项目**，克隆后按“快速开始”运行
 2. **结合 Resume Writer Skill** 写自己的简历（Skill 会根据你的背景定制化生成项目描述）
 3. **尝试理解项目**，跑通核心流程，结合我后续总结的该项目面试问题，先去面试
 4. **随着面试深入理解、扩展项目**——面试本身就是最好的学习驱动力
@@ -211,7 +387,7 @@ python main.py
 3. **不需要关心技术细节**：产品不用关心每一行代码怎么写，但通过跑通这个流程，你能从产品层面思考痛点——比如检索不准怎么定义指标、用户体验上怎么设计反馈机制、数据质量如何影响 RAG 效果等
 
 **具体怎么做：**
-- 克隆 `main` 分支，用 Setup Skill 跑起来，体验完整流程
+- 克隆后按“快速开始”运行，体验完整流程
 - 把你自己业务领域的文档丢进去，看检索效果，思考产品层面的优化方向
 - 面试时讲你的产品思路和设计思考，技术实现部分说明是用 AI 辅助完成的
 
@@ -339,35 +515,32 @@ Skill 采用 **"写作原则 + 项目亮点 + 用户画像 = 定制化简历"** 
 
 ### 1. 如何切换 Provider（比如换成 Qwen / DeepSeek / Ollama）？
 
-**非常简单——直接问 AI 帮你完成即可。**
+先查看“配置说明”中的内置 Provider，再修改对应模块的配置。OpenAI 兼容服务可使用 `openai` Provider 配置自己的 `base_url`、`model` 和 Key；Ollama 使用它自己的 `ollama` Provider。LLM 与 Embedding 分别选型，模型必须支持对应接口。未内置的协议需要实现 `src/libs/` 下的抽象并在工厂注册。
 
-项目从架构设计上使用了**工厂模式（Factory Pattern）**，Provider 的扩展和切换非常方便。你只需要理解内部原理就会发现：不同 API 本质上都是类似的 HTTP 请求，甚至大多数都遵循 OpenAI 的请求格式，切换起来特别容易。
-
-**具体操作方式有两种：**
-
-1. **使用 Setup Skill（推荐）**：运行一键 Setup Skill，AI 会主动询问你想用哪个 Provider，引导你填入 API Key，然后自动帮你完成代码适配和配置生成。
-2. **直接让 AI 帮你改**：把你想切换的 Provider 告诉 AI（如 "帮我切换到 Qwen" 或 "帮我配置 DeepSeek"），AI 能根据工厂模式的架构自动完成代码编写。
-
-> **原理说明**：项目的 `src/libs/` 下的 LLM、Embedding、Reranker 等模块都使用工厂模式，新增一个 Provider 只需要：① 新增一个 Provider 类；② 在工厂注册；③ 更新 `settings.yaml` 配置。AI 完全可以自动完成这些步骤。
+修改 Embedding 模型或维度后，请指定新的 Chroma / BM25 路径并重新摄取。`--force` 本身不会隔离旧模型的向量。
 
 ### 2. 项目评估（Custom Evaluator）与 Cross-Encoder Reranker 部分
 
-这两个模块的**框架代码已经搭好，但尚未经过完整测试**，感兴趣的同学可以自行完善：
+Custom 已实现确定性的 Hit Rate / MRR，并有单元测试。Cross-Encoder 已实现且有离线后端模拟测试；首次实际推理需要下载配置的模型，耗时和内存占用与机器、网络有关。使用 `provider: cross_encoder` 并启用重排后再测试实际模型；超时、模型加载失败或推理异常会记录 fallback 并保留融合顺序。
 
-| 模块 | 状态 | 需要做什么 |
-|------|------|-----------|
-| **自定义评估（Custom Evaluator）** | 框架已有，未测试 | 定义评估方法，准备对应的测试数据集 |
-| **Cross-Encoder Reranker** | 框架已有，未测试 | 需要下载本地重排模型（如 `cross-encoder/ms-marco-MiniLM-L-6-v2`） |
-
-**这些 AI 都能帮你写出来**。把需求描述清楚，AI 可以帮你实现评估方法、准备数据、下载模型并完成集成测试。完成这些扩展对面试也是加分项，体现了你的独立扩展能力。
+Ragas 使用真实框架配合模拟模型执行离线测试；这验证接口与计算链路，不保证任意线上 judge 的评分稳定性。
 
 ### 3. 项目报错 / Bug 怎么办？
 
-**这不是一个经过广泛测试的生产级项目，而是一个面试导向的实战项目。** 遇到报错是正常的。
+先确认错误属于配置、模型服务、存储还是客户端连接，再运行对应测试。提交问题时提供脱敏命令、Python 版本和错误类型，保留可复现的最小样例。
 
-- **对面试的影响**：项目的 Bug 对面试几乎没有影响——面试官不会去实际运行你的项目，他们关注的是你对架构、原理和设计决策的理解。
-- **如何修复**：最简单的方式是**把错误信息直接丢给 AI**，绝大多数问题 AI 都能帮你修复。
-- **参考资源**：笔记中推荐的 Tina Huang 的视频里也介绍了这种用 AI 快速修复错误的方法。
+| 现象 | 排查步骤 |
+|---|---|
+| Key 缺失或 401 | 在实际运行进程中设置 `OPENAI_API_KEY`；终端变量不一定传给已启动的 VS Code / Claude。`.env` 不会被程序自动读取。 |
+| 依赖导入失败 | 确认激活 `rag`，运行 `python -m pip install -e ".[dev]"` 和 `python -m pip check`。Ragas 与 langchain-community 的版本范围已在 `pyproject.toml` 约束，避免单独升级破坏兼容。 |
+| Conda 启动器异常 | 使用已激活环境的 `python`，或用前文打印的解释器绝对路径；MCP 示例不依赖 GUI 进程的 Conda 自动激活。 |
+| Embedding 连接失败 | 检查 `provider`、`base_url`、`model`、代理和服务可达性；Ollama 要先启动服务并准备 Embedding 模型。 |
+| 摄取为 skipped | 同一文件内容已成功处理；需要重跑时使用 `--force`。同内容改名也会命中去重记录。 |
+| Dashboard 看不到数据 | 核对各入口的工作目录及存储路径，检查逻辑集合过滤；数据浏览器可点击刷新。 |
+| MCP 等待或没有工具 | 手动运行 `main.py` 时等待 stdin 是正常现象；客户端中确认 Python / 脚本绝对路径、工作目录与 Key，查看服务 stderr 日志并重启服务。 |
+| MCP 有查询但无引用 | 确认源 PDF 已成功摄取、集合名称正确且检索索引一致；来源页码没有保存时 citation.page 为 `null`。 |
+| 评估无法开始 | 先摄取黄金集对应文件；检查 JSON 标签；Ragas 需要样例 `answer`，Context Precision 还需要 `reference`。 |
+| 端口 8501 被占用 | 用 `python scripts/start_dashboard.py --port 8502` 并打开对应地址。 |
 
 ### 4. 想摄取 PDF 以外的文档格式（Word / Markdown / HTML 等）怎么办？
 
@@ -381,12 +554,7 @@ Skill 采用 **"写作原则 + 项目亮点 + 用户画像 = 定制化简历"** 
 
 本项目是一个 **MCP Server**，可以集成到任何支持 MCP 协议的 AI 工具和 Agent 中。我的演示中已经集成到了 **GitHub Copilot** 和 **Cursor** 中，你同样可以集成到 **Claude Code** 或其他支持 MCP 框架的工具。
 
-**如何集成？非常简单——问 AI。**
-
-本质上就是给不同的工具写一个 MCP 的配置文件：
-- **Copilot（VS Code）**：让 AI 帮你生成 MCP 配置文件即可
-- **Cursor**：直接导入项目，Cursor 会自动识别
-- **Claude Code / 其他框架**：问 AI 怎么配置，每个工具的配置方式略有不同，但原理都一样
+使用前文的 MCP 配置示例。Copilot 的 VS Code 格式与便携格式顶层字段不同，Claude Desktop 使用 `mcpServers`。Cursor、Claude Code 等其他客户端应按各自文档添加 stdio 服务；仅打开仓库不等于已经注册工具。
 
 当然，也推荐你去理解 MCP 协议的原理——了解 Server 和 Client 之间是如何通信的、Tool 是怎么注册和调用的。这些在面试中也是加分项。
 
